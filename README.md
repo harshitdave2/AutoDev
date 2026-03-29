@@ -1,8 +1,8 @@
-# AutoDev — AI Debugging Agent
+# AutoDev — Autonomous AI Debugging Agent
 
-AutoDev is a command-line AI debugging system that can automatically detect and repair bugs in **Python, C++, and Java** programs.
+AutoDev is an **AI-powered debugging system** that automatically detects and repairs bugs in **Python, C++, and Java** programs.
 
-It analyzes runtime failures, logical anomalies, and compiler errors, then uses AI models to generate candidate fixes and test them automatically.
+It executes the target program, analyzes failures, and uses **LLMs to generate and test candidate fixes** until the program runs successfully.
 
 ---
 
@@ -11,62 +11,77 @@ It analyzes runtime failures, logical anomalies, and compiler errors, then uses 
 * Automatic bug detection
 * AI-generated code repair
 * Supports **Python, C++, Java**
-* Local LLM support (Ollama)
+* Local LLM support via **Ollama**
 * Cloud model fallback
 * Patch validation system
 * Bug memory for repeated fixes
-* CLI based workflow
+* CLI-based debugging workflow
+* Multi-attempt repair loop
 
 ---
 
 ## Architecture
 
-AutoDev pipeline:
+AutoDev debugging pipeline:
 
+```
 CLI
-→ Language Router
-→ Runner
-→ Analyzer
-→ AutoDev Agent
-→ LLM Repair
-→ Patch Engine
-→ Retry Manager
-→ Execution Validation
+ → Language Router
+ → Runner
+ → Analyzer
+ → AutoDev Agent
+ → LLM Repair
+ → Patch Engine
+ → Retry Manager
+ → Execution Validation
+```
+
+This architecture enables AutoDev to automatically analyze crashes, generate fixes, and test them safely.
 
 ---
 
 ## Installation
 
-Clone the repository:
+### 1. Clone the repository
 
 ```
-git clone https://github.com/yourname/autodev.git
-cd autodev
+git clone https://github.com/harshitdave2/AutoDev
+cd AutoDev
 ```
 
-Install dependencies:
+### 2. Install dependencies
 
 ```
 pip install -r requirements.txt
 ```
 
-Install Ollama (for local models):
+### 3. Install Ollama (for local AI models)
+
+Download from:
 
 ```
 https://ollama.ai
 ```
 
-Pull a coding model:
+### 4. Install a coding model
+
+Example:
 
 ```
 ollama pull deepseek-coder:6.7b
 ```
 
+You may also use:
+
+```
+ollama pull qwen2.5-coder:7b
+```
+
 ---
 
-## Usage
+## Quick Start
 
-Run AutoDev on a file:
+Run AutoDev on a program:
 
 ```
 python autodev.py run myfile.py
@@ -75,14 +90,14 @@ python autodev.py run myfile.py
 Examples:
 
 ```
-python autodev.py run buggy_matrix.cpp
-python autodev.py run PseudoCode.java
-python autodev.py run broken_script.py
+python autodev.py run examples/broken_python.py
+python autodev.py run examples/broken_cpp.cpp
+python autodev.py run examples/broken_java.java
 ```
 
 ---
 
-## CLI Options
+## CLI Usage
 
 ```
 python autodev.py run <file> [options]
@@ -90,11 +105,17 @@ python autodev.py run <file> [options]
 
 Options:
 
-| Option          | Description                    |
-| --------------- | ------------------------------ |
-| `--max-retries` | number of repair attempts      |
-| `--dry-run`     | preview patch without applying |
-| `--help`        | show command help              |
+| Option          | Description                 |
+| --------------- | --------------------------- |
+| `--max-retries` | Maximum repair attempts     |
+| `--dry-run`     | Show patch without applying |
+| `--help`        | Display command help        |
+
+Example:
+
+```
+python autodev.py run buggy_matrix.cpp --max-retries 5
+```
 
 ---
 
@@ -121,9 +142,67 @@ Proceeding with repair attempts...
 
 ---
 
-## Project Goal
+## Project Structure
 
-AutoDev aims to provide a lightweight autonomous debugging tool that can automatically repair common programming errors using AI models.
+```
+AutoDev/
+│
+├── agent/
+├── core/
+├── languages/
+├── models/
+│
+├── examples/
+│   ├── broken_python.py
+│   ├── broken_cpp.cpp
+│   └── broken_java.java
+│
+├── autodev.py
+├── README.md
+├── requirements.txt
+└── LICENSE
+```
+
+---
+
+## Model Configuration
+
+AutoDev works with **local models via Ollama**.
+
+Recommended models:
+
+| Model               | Use                            |
+| ------------------- | ------------------------------ |
+| deepseek-coder:6.7b | Fast and reliable code repair  |
+| qwen2.5-coder:7b    | Strong reasoning for debugging |
+
+---
+
+## Roadmap
+
+Planned improvements:
+
+* Better logical bug detection
+* AST-based bug localization
+* Multi-agent repair system
+* Test-case generation
+* IDE integration
+* Web dashboard
+
+---
+
+## Contributing
+
+Contributions are welcome!
+
+You can help by:
+
+* Adding new language support
+* Improving repair accuracy
+* Improving validation heuristics
+* Fixing bugs
+
+Open an issue or submit a pull request.
 
 ---
 
