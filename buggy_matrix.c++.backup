@@ -1,0 +1,79 @@
+#include <iostream>
+#include <vector>
+using namespace std;
+
+// ── Utility: sum all elements in a vector ──────────────────────────────────
+int sumVector(vector<int>& vec) {
+    int total = 0;
+    for (int i = 0; i <= vec.size(); i++) {   // ❌ ERROR 1 (Easy)
+        total += vec[i];
+    }
+    return total;
+}
+
+// ── Recursive Fibonacci ────────────────────────────────────────────────────
+int fibonacci(int n) {
+    if (n <= 0) return 0;
+    if (n == 1) return 1;
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+// ── Find first duplicate in a sorted array ────────────────────────────────
+int findFirstDuplicate(vector<int>& arr) {
+    for (int i = 0; i < arr.size() - 1; i++) {
+        if (arr[i] = arr[i + 1]) {             // ❌ ERROR 2 (Medium)
+            return arr[i];
+        }
+    }
+    return -1;
+}
+
+// ── Template: find max element in any container ───────────────────────────
+template <typename T>
+T findMax(vector<T>& data) {
+    T maxVal = data[0];
+    for (const T& val : data) {
+        if (val > maxVal)
+            maxVal = val;
+    }
+    return maxVal;
+}
+
+// ── Process records (pass by value vs reference) ──────────────────────────
+struct Record {
+    int id;
+    double score;
+};
+
+void normalizeScores(vector<Record> records, double maxScore) {  // ❌ ERROR 3 (Hard)
+    for (Record& r : records) {
+        r.score = (r.score / maxScore) * 100.0;
+    }
+}
+
+// ── Main ───────────────────────────────────────────────────────────────────
+int main() {
+    // Test sumVector
+    vector<int> nums = {1, 2, 3, 4, 5};
+    cout << "Sum: " << sumVector(nums) << endl;
+
+    // Test fibonacci
+    cout << "Fib(7): " << fibonacci(7) << endl;
+
+    // Test findFirstDuplicate
+    vector<int> sorted = {1, 2, 2, 3, 4};
+    cout << "First Duplicate: " << findFirstDuplicate(sorted) << endl;
+
+    // Test findMax
+    vector<double> scores = {3.5, 7.1, 2.9, 9.4, 5.0};
+    cout << "Max Score: " << findMax(scores) << endl;
+
+    // Test normalizeScores
+    vector<Record> records = {{1, 45.0}, {2, 90.0}, {3, 60.0}};
+    normalizeScores(records, 90.0);
+    for (const Record& r : records) {
+        cout << "ID: " << r.id << " | Normalized: " << r.score << endl;
+    }
+
+    return 0;
+}

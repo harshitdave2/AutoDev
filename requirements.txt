@@ -1,0 +1,15 @@
+rich
+pytest
+requests
+groq
+langchain
+sentence-transformers
+faiss-cpu
+python-dotenv
+pydantic
+typer
+fastapi
+uvicorn
+loguru
+gitpython
+unidiff

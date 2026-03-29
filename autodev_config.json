@@ -1,0 +1,10 @@
+{
+  "model": "ollama",
+  "ollama_model": "deepseek-coder:6.7b",
+  "groq_model": "mixtral-8x7b",
+  "gemini_model": "gemini-1.5-pro",
+  "api_keys": {
+    "groq": "",
+    "gemini": ""
+  }
+}

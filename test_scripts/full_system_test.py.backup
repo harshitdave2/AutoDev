@@ -1,0 +1,73 @@
+"""
+Full System Test Script for AutoDev
+
+This script simulates a small user analytics system.
+It intentionally contains multiple runtime bugs.
+
+AutoDev should:
+- Detect crash
+- Extract context
+- Generate fix
+- Apply patch
+- Retry until stable
+"""
+
+# ----------------------------------------
+# Database Simulation
+# ----------------------------------------
+
+users = [
+    {"id": 1, "name": "Alice", "scores": [85, 90, 78]},
+    {"id": 2, "name": "Bob", "scores": []},
+    {"id": 3, "name": "Charlie", "scores": [100, 95]},
+]
+
+
+# ----------------------------------------
+# Feature 1: Get User by ID (Bug: KeyError risk)
+# ----------------------------------------
+
+def get_user(user_id):
+    for user in users:
+        if user["id"] == user_id:
+            return user
+    return None
+
+
+# ----------------------------------------
+# Feature 2: Calculate Average Score
+# BUG: ZeroDivisionError when scores empty
+# ----------------------------------------
+
+def calculate_average(scores):
+    total = sum(scores)
+    return total / len(scores)
+
+
+# ----------------------------------------
+# Feature 3: Get User Score by Index
+# BUG: IndexError possible
+# ----------------------------------------
+
+def get_score_by_index(user_id, index):
+    user = get_user(user_id)
+    return user["scores"][index]
+
+
+# ----------------------------------------
+# Feature 4: Format Report
+# BUG: TypeError possible
+# ----------------------------------------
+
+def format_report(user_id):
+    user = get_user(user_id)
+    avg = calculate_average(user["scores"])
+    first_score = get_score_by_index(user_id, 0)
+    return "User: " + user["name"] + " | Avg: " + avg + " | First Score: " + first_score
+
+
+# ----------------------------------------
+# Feature 5: Trigger Execution
+# ----------------------------------------
+
+print(format_report(2))
