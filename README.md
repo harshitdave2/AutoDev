@@ -1,3 +1,4 @@
+⚠️ AutoDev is an experimental AI debugging system. Use with caution on production code.
 # AutoDev — Autonomous AI Debugging Agent
 
 AutoDev is an **AI-powered debugging system** that automatically detects and repairs bugs in **Python, C++, and Java** programs.
