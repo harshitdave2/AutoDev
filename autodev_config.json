@@ -1,10 +1,19 @@
 {
   "model": "ollama",
   "ollama_model": "deepseek-coder:6.7b",
-  "groq_model": "mixtral-8x7b",
-  "gemini_model": "gemini-1.5-pro",
+  "groq_model": "llama-3.3-70b-versatile",
+  "gemini_model": "gemini-2.0-flash",
   "api_keys": {
     "groq": "",
     "gemini": ""
-  }
+  },
+  "context_budget": {
+    "local": 3500,
+    "cloud": 12000,
+    "local_fast": 1500
+  },
+  "local_timeout": 45,
+  "cloud_timeout": 60,
+  "max_gen_attempts": 1,
+  "fast_mode": true
 }

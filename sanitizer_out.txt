@@ -1,0 +1,17 @@
+Sanitized LLM output successfully.
+=== Case 1: Malformed JSON (real newlines in string) ===
+'from type_error import calculate_user_average\n\ndef run_reports():\n    print("Starting system report generation...\n")'
+
+Auto-repaired minor syntax issues.
+=== Case 2: auto_fix_syntax on unterminated string ===
+'def foo():\n    print("Starting system report generation...")\n'
+
+Sanitized LLM output successfully.
+=== Case 3: Valid JSON extraction ===
+def foo():
+    return 42
+
+Sanitized LLM output successfully.
+=== Case 4: JSON surrounded by prose ===
+x = 1
+print(x)

@@ -1,0 +1,27 @@
+/*
+ * benchmarks/cpp/segfault.cpp
+ * Bug: Array out-of-bounds access causing segmentation fault
+ */
+#include <iostream>
+#include <vector>
+
+int find_max(const std::vector<int>& arr) {
+    int max_val = arr[0];
+    // BUG: <= arr.size() should be < arr.size()
+    for (int i = 1; i <= (int)arr.size(); i++) {
+        if (arr[i] > max_val) {  // arr[arr.size()] is out of bounds
+            max_val = arr[i];
+        }
+    }
+    return max_val;
+}
+
+int main() {
+    std::vector<int> numbers = {3, 7, 1, 9, 4, 6, 2};
+    std::cout << "Array: ";
+    for (int n : numbers) std::cout << n << " ";
+    std::cout << std::endl;
+    int max_val = find_max(numbers);
+    std::cout << "Max value: " << max_val << std::endl;
+    return 0;
+}

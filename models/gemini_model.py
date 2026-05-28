@@ -4,13 +4,9 @@ from models.base_model import BaseModel
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
-from core.sanitizer import extract_json_from_text, clean_python_code
+from core.sanitizer import extract_json_from_text, clean_code_by_language
 
 load_dotenv()
-
-api_key = os.getenv("GEMINI_API_KEY")
-if not api_key:
-    raise ValueError("GEMINI_API_KEY not found in environment or .env file.")
 
 
 class GeminiModel(BaseModel):
@@ -19,18 +15,17 @@ class GeminiModel(BaseModel):
     Used primarily as a highly capable fallback model.
     """
 
-    def __init__(self, model_name: str = "gemini-2.0-flash"):
+    def __init__(self, model_name: str = "gemini-2.0-flash", api_key: str = None):
         self.model_name = model_name
-        api_key = os.getenv("GEMINI_API_KEY")
+        resolved_key = api_key or os.getenv("GEMINI_API_KEY")
 
-        if not api_key:
+        if not resolved_key:
             raise ValueError(
-                "GEMINI_API_KEY environment variable is not set. Please set it to use the Gemini fallback.")
+                "GEMINI_API_KEY not found. Set it in .env or pass it directly.")
 
-        # ← CHANGED: Client-based init instead of genai.configure()
-        self.client = genai.Client(api_key=api_key)
+        self.client = genai.Client(api_key=resolved_key)
 
-    def generate_fix(self, prompt: str) -> str:
+    def generate_fix(self, prompt: str, language: str = "python") -> str:
         """
         Sends the prompt to the Gemini API, enforcing and validating JSON structure.
         """
@@ -49,17 +44,7 @@ class GeminiModel(BaseModel):
         except Exception as e:
             raise Exception(f"Gemini API request failed: {e}")
 
-        # Safely parse the JSON to ensure the model obeyed instructions
-        clean_json = extract_json_from_text(raw_response)
-
-        try:
-            parsed_data = json.loads(clean_json)
-        except json.JSONDecodeError:
-            raise Exception(f"Gemini did not return valid JSON. Raw output: {raw_response}")
-
-        if "fixed_code" not in parsed_data:
-            raise Exception("Gemini returned JSON, but 'fixed_code' key is missing.")
-
-        clean_code = clean_python_code(parsed_data["fixed_code"])
-
-        return clean_code
+        # Return raw JSON string; agent.py parses candidate_1/2/3
+        # No extra sanitize pass — avoids Python-specific cleanup breaking C++/Java
+        from core.sanitizer import _strip_bos_artifacts
+        return _strip_bos_artifacts(raw_response) if raw_response else raw_response

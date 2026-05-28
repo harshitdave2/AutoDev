@@ -35,49 +35,33 @@ CLI
 
 ---
 
-## Installation
+## Quick Start
 
-Clone the repository:
+**Clone the repository**
 
+```bash
+git clone https://github.com/harshitdave2/AutoDev
+cd AutoDev
 ```
-git clone https://github.com/yourname/autodev.git
-cd autodev
-```
 
-Install dependencies:
+**Install dependencies**
 
-```
+```bash
 pip install -r requirements.txt
 ```
 
-Install Ollama (for local models):
+**Install a local coding model**
 
-```
-https://ollama.ai
-```
-
-Pull a coding model:
-
-```
+```bash
 ollama pull deepseek-coder:6.7b
 ```
 
----
+**Run AutoDev**
 
-## Usage
-
-Run AutoDev on a file:
-
-```
-python autodev.py run myfile.py
-```
-
-Examples:
-
-```
-python autodev.py run buggy_matrix.cpp
-python autodev.py run PseudoCode.java
-python autodev.py run broken_script.py
+```bash
+python autodev.py run examples/broken_python.py
+python autodev.py run examples/broken_cpp.cpp
+python autodev.py run examples/broken_java.java
 ```
 
 ---

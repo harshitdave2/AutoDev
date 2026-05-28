@@ -3,147 +3,193 @@
 #include <string>
 using namespace std;
 
-//  Reverse a string in-place 
-void reverseString(string& s) {
-    int n = s.length();
-    for (int i = 0; i < n / 2; i++) {
-        char temp = s[i];
-        s[i] = s[n - i];                        //  ERROR 1 (Easy)
-        s[n - i] = temp;
-    }
-}
+// ---------------------------------------------------
+// Student Record Management System
+// PSEUDO C++ CODE WITH 2 TRICKY ERRORS
+// ---------------------------------------------------
 
-//  Binary Search 
-int binarySearch(vector<int>& arr, int target) {
-    int low = 0, high = arr.size() - 1;
-
-    while (low <= high) {
-        int mid = (low + high) / 2;
-        if (arr[mid] == target)
-            return mid;
-        else if (arr[mid] < target)
-            low = mid + 1;
-        else
-            high = mid - 1;
-    }
-    return -1;
-}
-
-//  Stack implementation using vector 
-class Stack {
+class Student
+{
 private:
-    vector<int> data;
+    int id;
+    string name;
+    vector<int> marks;
 
 public:
-    void push(int val) {
-        data.push_back(val);
+    Student(int studentId, string studentName)
+    {
+        id = studentId;
+        name = studentName;
     }
 
-    void pop() {
-        data.pop_back();
+    void addMark(int mark)
+    {
+        marks.push_back(mark);
     }
 
-    int top() {
-        return data.back();
+    double calculateAverage()
+    {
+        int sum = 0;
+
+        for(int i = 0; i <= marks.size(); i++)     // ERROR 1
+        {
+            sum += marks[i];
+        }
+
+        return sum / marks.size();
     }
 
-    bool isEmpty() {
-        return data.empty();
+    void display()
+    {
+        cout << "ID: " << id << endl;
+        cout << "Name: " << name << endl;
+
+        cout << "Marks: ";
+
+        for(int i = 0; i < marks.size(); i++)
+        {
+            cout << marks[i] << " ";
+        }
+
+        cout << endl;
+
+        cout << "Average: " << calculateAverage() << endl;
     }
 };
 
-//  Count word frequency in a sentence 
-int countWord(string sentence, string word) {
-    int count = 0;
-    int pos = 0;
+class RecordManager
+{
+private:
+    vector<Student*> students;
 
-    while ((pos = sentence.find(word, pos)) != string::npos) {
-        count++;
-        pos++;
+public:
+    void addStudent(Student* s)
+    {
+        students.push_back(s);
     }
-    return count;
-}
 
-//  Matrix multiplication (2x2) 
-void multiplyMatrix(int A[2][2], int B[2][2], int C[2][2]) {
-    for (int i = 0; i < 2; i++) {
-        for (int j = 0; j < 2; j++) {
-            C[i][j] = 0;
-            for (int k = 0; k < 2; k++) {
-                C[i][j] += A[i][k] * B[k][j];  //  ERROR 2 (Medium)
+    Student* searchStudent(int id)
+    {
+        for(int i = 0; i < students.size(); i++)
+        {
+            if(students[i]->getId() == id)
+            {
+                return students[i];
+            }
+        }
+
+        return NULL;
+    }
+
+    void removeStudent(int id)
+    {
+        for(int i = 0; i < students.size(); i++)
+        {
+            if(students[i]->getId() == id)
+            {
+                delete students[i];
+
+                students.erase(students.begin() + i);
             }
         }
     }
-}
 
-//  Merge two sorted vectors 
-vector<int> mergeSorted(vector<int> a, vector<int> b) {
-    vector<int> result;
-    int i = 0, j = 0;
-
-    while (i < a.size() && j < b.size()) {
-        if (a[i] <= b[j])
-            result.push_back(a[i++]);
-        else
-            result.push_back(b[j++]);
+    void displayAll()
+    {
+        for(int i = 0; i < students.size(); i++)
+        {
+            students[i]->display();
+            cout << "----------------------" << endl;
+        }
     }
-    while (i < a.size()) result.push_back(a[i++]);
-    while (j < b.size()) result.push_back(b[j++]);
 
-    return result;
+    ~RecordManager()
+    {
+        for(int i = 0; i < students.size(); i++)
+        {
+            delete students[i];
+        }
+    }
+};
+
+// Extra helper functions
+
+void loadDummyData(RecordManager manager)      // ERROR 2
+{
+    Student* s1 = new Student(101, "Harshit");
+    s1->addMark(90);
+    s1->addMark(85);
+    s1->addMark(95);
+
+    Student* s2 = new Student(102, "Aman");
+    s2->addMark(70);
+    s2->addMark(75);
+    s2->addMark(80);
+
+    manager.addStudent(s1);
+    manager.addStudent(s2);
 }
 
-//  Cache-based Fibonacci (memoization) 
-int fibMemo(int n, vector<int>& memo) {
-    if (n <= 1) return n;
-    if (memo[n] != -1) return memo[n];     
-    memo[n] = fibMemo(n - 1, memo) + fibMemo(n - 2, memo);
-    return memo[n];
-}
+int main()
+{
+    RecordManager manager;
 
-int computeFib(int n) {
-    vector<int> memo(n, -1);               //  ERROR 3 (Hard)
-    return fibMemo(n, memo);
-}
+    loadDummyData(manager);
 
-//  Main 
-int main() {
-    // Test reverseString
-    string s = "hello";
-    reverseString(s);
-    cout << "Reversed: " << s << endl;
+    int choice;
 
-    // Test binarySearch
-    vector<int> arr = {1, 3, 5, 7, 9, 11};
-    cout << "Found at index: " << binarySearch(arr, 7) << endl;
+    while(true)
+    {
+        cout << endl;
+        cout << "===== MENU =====" << endl;
+        cout << "1. Add Student" << endl;
+        cout << "2. Display Students" << endl;
+        cout << "3. Exit" << endl;
 
-    // Test Stack
-    Stack st;
-    st.push(10); st.push(20); st.push(30);
-    cout << "Stack Top: " << st.top() << endl;
-    st.pop();
-    cout << "After Pop: " << st.top() << endl;
+        cin >> choice;
 
-    // Test countWord
-    cout << "Word count: " << countWord("the cat sat on the mat", "the") << endl;
+        if(choice == 1)
+        {
+            int id;
+            string name;
 
-    // Test multiplyMatrix
-    int A[2][2] = {{1, 2}, {3, 4}};
-    int B[2][2] = {{5, 6}, {7, 8}};
-    int C[2][2] = {};
-    multiplyMatrix(A, B, C);
-    cout << "Matrix C[0][0]: " << C[0][0] << endl;  // Expected: 19
+            cout << "Enter ID: ";
+            cin >> id;
 
-    // Test mergeSorted
-    vector<int> x = {1, 3, 5};
-    vector<int> y = {2, 4, 6};
-    vector<int> merged = mergeSorted(x, y);
-    cout << "Merged: ";
-    for (int v : merged) cout << v << " ";
-    cout << endl;
+            cout << "Enter Name: ";
+            cin >> name;
 
-    // Test computeFib
-    cout << "Fib(6): " << computeFib(6) << endl;   // Expected: 8
+            Student* s = new Student(id, name);
+
+            int n;
+            cout << "Enter number of marks: ";
+            cin >> n;
+
+            for(int i = 0; i < n; i++)
+            {
+                int mark;
+
+                cout << "Enter mark " << i + 1 << ": ";
+                cin >> mark;
+
+                s->addMark(mark);
+            }
+
+            manager.addStudent(s);
+        }
+        else if(choice == 2)
+        {
+            manager.displayAll();
+        }
+        else if(choice == 3)
+        {
+            break;
+        }
+        else
+        {
+            cout << "Invalid choice!" << endl;
+        }
+    }
 
     return 0;
 }

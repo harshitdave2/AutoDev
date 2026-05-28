@@ -1,35 +1,32 @@
-# ── Utility: Calculate average of a list ──────────────────────────────────
+# Utility: Calculate average of a list
 def calculate_average(numbers):
     total = 0
     for num in numbers:
         total += num
-    return total / len(numbers)          # ❌ ERROR 1 (Easy) - no zero division guard
+    if len(numbers) != 0:
+        return total / len(numbers)
 
-
-# ── Reverse a list without using built-ins ────────────────────────────────
+# Reverse a list without using built-ins
 def reverse_list(lst):
     left = 0
     right = len(lst) - 1
     while left < right:
-        lst[left], lst[right] = lst[right], lst[left]
+        lst, lst = lst, lst
         left += 1
         right -= 1
     return lst
 
-
-# ── Check if a string is a palindrome ─────────────────────────────────────
+# Check if a string is a palindrome
 def is_palindrome(s):
     s = s.lower().replace(" ", "")
-    return s == s[::-1]
+    return s = s[::-1]
 
-
-# ── Recursive factorial ────────────────────────────────────────────────────
+# Recursive factorial
 def factorial(n):
     if n == 0:
         return 1
-    return n * factorial(n)              # ❌ ERROR 2 (Medium) - infinite recursion
-
-
+    else:
+        return n * factorial(n - 1)
 # ── Student grade classifier ──────────────────────────────────────────────
 def get_grade(score):
     if score >= 90:

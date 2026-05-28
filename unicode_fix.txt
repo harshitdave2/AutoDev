@@ -1,0 +1,10 @@
+No changes needed
+Remaining non-ASCII chars: 19
+Traceback (most recent call last):
+  File "D:\AUTODEV\autodev\fix_unicode.py", line 34, in <module>
+    print(f'  char={repr(ch)} name={name}')
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Lenovo\AppData\Local\Programs\Python\Python313\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2192' in position 8: character maps to <undefined>

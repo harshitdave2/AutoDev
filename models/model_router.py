@@ -9,14 +9,14 @@ class ModelRouter(BaseModel):
         self.primary = primary
         self.fallback = fallback
 
-    def generate_fix(self, prompt: str) -> str:
+    def generate_fix(self, prompt: str, language: str = "python") -> str:
         """
         Attempts the fix with the primary model. Escalates to fallback on failure.
         """
         try:
             # Try to get the fix from the primary (e.g., local Ollama)
-            return self.primary.generate_fix(prompt)
+            return self.primary.generate_fix(prompt, language)
         except Exception as e:
             # If the primary model fails entirely (e.g., Ollama is down or crashed), use fallback
             print(f"\n[!] Primary model failed: {e}. Routing to fallback model...")
-            return self.fallback.generate_fix(prompt)
+            return self.fallback.generate_fix(prompt, language)

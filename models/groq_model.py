@@ -3,7 +3,7 @@ import json
 from dotenv import load_dotenv
 from openai import OpenAI, RateLimitError
 from models.base_model import BaseModel
-from core.sanitizer import extract_json_from_text, clean_python_code
+from core.sanitizer import extract_json_from_text, clean_code_by_language
 
 # Load environment variables
 load_dotenv()
@@ -16,24 +16,24 @@ class GroqModel(BaseModel):
     """
     Concrete implementation of BaseModel for Groq's high-speed inference cloud.
     """
-    def __init__(self, model_name: str = "mixtral-8x7b-32768"):
+    def __init__(self, model_name: str = "llama-3.3-70b-versatile", api_key: str = None):
         self.model_name = model_name
-        self.api_key = os.environ.get("GROQ_API_KEY")
+        self.api_key = api_key or os.environ.get("GROQ_API_KEY")
         
         if not self.api_key:
-            raise ValueError("GROQ_API_KEY environment variable is missing.")
+            raise ValueError("GROQ_API_KEY not found. Set it in .env or pass it directly.")
             
         self.client = OpenAI(
             api_key=self.api_key,
             base_url="https://api.groq.com/openai/v1"
         )
 
-    def generate_fix(self, prompt: str) -> str:
+    def generate_fix(self, prompt: str, language: str = "python") -> str:
         """
         Sends the prompt to Groq, handling model deprecation and quota limits safely.
         """
         try:
-            return self._call_api(self.model_name, prompt)
+            return self._call_api(self.model_name, prompt, language)
         except Exception as e:
             error_str = str(e).lower()
             
@@ -41,7 +41,7 @@ class GroqModel(BaseModel):
             if "model_decommissioned" in error_str or "not found" in error_str:
                 self.model_name = "llama-3.3-70b-versatile"
                 try:
-                    return self._call_api(self.model_name, prompt)
+                    return self._call_api(self.model_name, prompt, language)
                 except Exception as retry_e:
                     self._handle_error(retry_e)
             else:
@@ -59,7 +59,7 @@ class GroqModel(BaseModel):
         clean_msg = str(e).split('\n')[0][:100]
         raise Exception(f"Groq API request failed: {type(e).__name__} - {clean_msg}")
 
-    def _call_api(self, target_model: str, prompt: str) -> str:
+    def _call_api(self, target_model: str, prompt: str, language: str) -> str:
         """Internal method to execute the actual HTTP request."""
         response = self.client.chat.completions.create(
             model=target_model,
@@ -69,18 +69,7 @@ class GroqModel(BaseModel):
 
         raw_response = response.choices[0].message.content
 
-        # NEW: sanitize JSON
-        clean_json = extract_json_from_text(raw_response)
-
-        try:
-            parsed_data = json.loads(clean_json)
-        except json.JSONDecodeError:
-            raise Exception(f"Groq did not return valid JSON. Raw output: {raw_response}")
-
-        if "fixed_code" not in parsed_data:
-            raise Exception("Groq returned JSON, but 'fixed_code' key is missing.")
-
-        # NEW: sanitize code
-        clean_code = clean_python_code(parsed_data["fixed_code"])
-
-        return clean_code
+        # Return the raw JSON string; agent.py will parse candidate_1/2/3
+        # No extra sanitize pass — avoids Python-specific cleanup breaking C++/Java
+        from core.sanitizer import _strip_bos_artifacts
+        return _strip_bos_artifacts(raw_response) if raw_response else raw_response

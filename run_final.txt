@@ -1,0 +1,53 @@
+
+=== Initial Execution Check ===
+X Crash detected!
+    return data_store
+           ~~~~~~~~~~^^^^^^^^^^^^^
+IndexError: list index out of range
+[T] External file target found: D:\AUTODEV\autodev\test_scripts\index_error.py
+Backups created for targeted files.
+
+=== Local Attempt 1/3 ===
+    [dim]-> Routing request to: deepseek-coder:6.7b...[/dim]
+Sanitized LLM output successfully.
+    [dim]OK deepseek-coder:6.7b generated valid code.[/dim]
+[W] Testing candidate patch 1/1...
+X Crash persists for candidate 1
+    scores = user["scores"]
+             ~~~~^^^^^^^^^^
+TypeError: 'NoneType' object is not subscriptable
+
+=== Local Attempt 2/3 ===
+    [dim]-> Routing request to: deepseek-coder:6.7b...[/dim]
+Sanitized LLM output successfully.
+    [dim]OK deepseek-coder:6.7b generated valid code.[/dim]
+[W] Testing candidate patch 1/1...
+X Crash persists for candidate 1
+    scores = user["scores"]
+             ~~~~^^^^^^^^^^
+TypeError: 'NoneType' object is not subscriptable
+
+=== Local Attempt 3/3 ===
+! Final Local Attempt: Full-file repair
+    [dim]-> Routing request to: deepseek-coder:6.7b...[/dim]
+Sanitized LLM output successfully.
+    [dim]OK deepseek-coder:6.7b generated valid code.[/dim]
+[W] Testing candidate patch 1/1...
+X Crash persists for candidate 1
+    return data_store
+           ~~~~~~~~~~^^^^^^^^^^^^^
+IndexError: list index out of range
+
+[^] Escalating to Cloud Models
+No cloud models configured
+X All repair attempts failed
+
+
++----------- AutoDev Execution Summary -----------+
+| Target Script: test_scripts/full_system_test.py |
+| Model Engine:  Unknown                          |
+| Attempts Used: 3/3                              |
+| Confidence:    LOW                              |
+| ---------------------------------               |
+| Final Status:  FAILED                           |
++-------------------------------------------------+

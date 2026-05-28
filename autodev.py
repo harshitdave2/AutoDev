@@ -19,6 +19,31 @@ def main():
     run_parser.add_argument("--max-retries", type=int, default=3, help="Maximum AI fix attempts.")
     run_parser.add_argument("--dry-run", action="store_true", help="Generate AI fix without applying it.")
     run_parser.add_argument("--verbose", action="store_true", help="Enable verbose output.")
+    run_parser.add_argument(
+        "--mode",
+        type=str,
+        default="full",
+        choices=["full", "function"],
+        help=(
+            "Patching mode: 'full' (default) replaces the entire file; "
+            "'function' applies a surgical function-level patch."
+        ),
+    )
+    run_parser.add_argument(
+        "--fast",
+        action="store_true",
+        default=True,
+        help=(
+            "Speed-first repair mode (default: enabled). Uses minimal context, "
+            "single candidate, tight token budget, and early stop on first valid patch."
+        ),
+    )
+    run_parser.add_argument(
+        "--no-fast",
+        dest="fast",
+        action="store_false",
+        help="Disable fast mode and use thorough multi-candidate repair.",
+    )
 
     args = parser.parse_args()
     console = Console()
@@ -34,7 +59,16 @@ def main():
         manager = RetryManager(model)
 
         # Call the manager with the new dry_run argument
-        result = manager.attempt_fix(args.script_path, max_retries=args.max_retries, dry_run=args.dry_run)
+        result = manager.attempt_fix(
+            args.script_path,
+            max_retries=args.max_retries,
+            dry_run=args.dry_run,
+            patch_mode=args.mode,
+            fast_mode=args.fast,
+        )
+
+        if args.fast:
+            console.print("[bold cyan][FastMode] Speed-first repair mode enabled[/bold cyan]")
 
         # --- FEATURE: Git-Style Diff Preview ---
         if result.get("old_code") and result.get("new_code"):
@@ -64,7 +98,25 @@ def main():
         old_code = result.get("old_code", "")
 
         provided_conf = result.get("confidence")
-        if provided_conf == "HIGH":
+
+        # Real confidence score from ConfidenceEngine (e.g. "87.3%")
+        if isinstance(provided_conf, str) and "%" in provided_conf:
+            try:
+                pct_val = float(provided_conf.replace("%", "").strip())
+                if pct_val >= 90:
+                    confidence = f"[bold green]{provided_conf} (A)[/bold green]"
+                elif pct_val >= 75:
+                    confidence = f"[green]{provided_conf} (B)[/green]"
+                elif pct_val >= 60:
+                    confidence = f"[yellow]{provided_conf} (C)[/yellow]"
+                elif pct_val >= 40:
+                    confidence = f"[bold yellow]{provided_conf} (D)[/bold yellow]"
+                else:
+                    confidence = f"[bold red]{provided_conf} (F)[/bold red]"
+            except ValueError:
+                confidence = f"[dim]{provided_conf}[/dim]"
+        # Legacy label fallback
+        elif provided_conf == "HIGH":
             confidence = "[bold green]HIGH[/bold green]"
         elif provided_conf == "MEDIUM":
             confidence = "[bold yellow]MEDIUM[/bold yellow]"

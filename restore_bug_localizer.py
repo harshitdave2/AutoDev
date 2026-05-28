@@ -1,0 +1,409 @@
+"""
+Restore the truncated bug_localizer.py by appending the missing methods,
+then adding Changes 3 and 4 (C++ routing and _extract_cpp_functions_with_classes).
+"""
+
+path = 'd:/AUTODEV/autodev/core/bug_localizer.py'
+src = open(path, 'r', encoding='utf-8').read()
+
+# The file currently ends at "    # Frame scoring" (line 367).
+# We need to restore everything from _score_frames onward.
+missing_content = r'''
+    @classmethod
+    def _score_frames(cls, frames):
+        """
+        Assign suspicion scores to all stack frames.
+
+        Scoring heuristics:
+          - User code frames score higher than stdlib frames
+          - Deeper frames (closer to crash site) score higher
+          - Frames with code snippets score slightly higher
+          - Frames from well-known stdlib modules score very low
+        """
+        n = len(frames)
+        for i, frame in enumerate(frames):
+            # Don't overwrite a suspicion_boost already set by compiler-symbol detection
+            if frame.suspicion_score > 0.0:
+                continue
+
+            score = 0.0
+
+            # Depth bonus: later frames (closer to crash) are more suspicious
+            depth_bonus = (i + 1) / n if n > 0 else 0.5
+            score += depth_bonus * 5.0
+
+            # User code bonus
+            if frame.is_user_code:
+                score += 4.0
+
+            # Code snippet presence
+            if frame.code_snippet:
+                score += 0.5
+
+            # Stdlib penalty
+            func_lower = frame.function_name.lower()
+            if any(ind in func_lower for ind in cls._STDLIB_INDICATORS):
+                score -= 2.0
+
+            # Module-level calls get mild boost (often where bugs live)
+            if frame.function_name == "<module>":
+                score += 1.0
+
+            frame.suspicion_score = max(0.0, score)
+
+        return frames
+
+    # -----------------------------------------------------------------------
+    # Suspicious function extraction
+    # -----------------------------------------------------------------------
+
+    @classmethod
+    def _extract_suspicious_functions(
+        cls,
+        file_path,
+        frames,
+        language,
+    ):
+        """
+        Extract and rank the most suspicious functions from the source file.
+        """
+        if not file_path or not os.path.exists(file_path):
+            return []
+
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                source = f.read()
+        except Exception:
+            return []
+
+        # Group frames by function name to accumulate suspicion
+        func_suspicion = {}
+        func_frame = {}
+        for frame in frames:
+            if not frame.is_user_code:
+                continue
+            name = frame.function_name
+            func_suspicion[name] = func_suspicion.get(name, 0.0) + frame.suspicion_score
+            if name not in func_frame or frame.suspicion_score > func_frame[name].suspicion_score:
+                func_frame[name] = frame
+
+        suspicious_funcs = []
+
+        if language == "python":
+            suspicious_funcs = cls._extract_python_functions(
+                source, file_path, func_suspicion, func_frame
+            )
+        elif language == "cpp":
+            suspicious_funcs = cls._extract_cpp_functions_with_classes(
+                source, file_path, func_suspicion, func_frame
+            )
+        elif language == "java":
+            suspicious_funcs = cls._extract_generic_functions(
+                source, file_path, func_suspicion, func_frame, language
+            )
+
+        # Sort by suspicion score descending
+        suspicious_funcs.sort(key=lambda f: f.suspicion_score, reverse=True)
+        return suspicious_funcs[:5]  # Return top 5
+
+    @staticmethod
+    def _extract_python_functions(
+        source,
+        file_path,
+        func_suspicion,
+        func_frame,
+    ):
+        """Extract Python functions using AST."""
+        import ast
+        results = []
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return results
+
+        lines = source.splitlines()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not hasattr(node, "end_lineno"):
+                continue
+            func_src = "\n".join(lines[node.lineno - 1: node.end_lineno])
+            suspicion = func_suspicion.get(node.name, 0.0)
+            frame = func_frame.get(node.name)
+            reason = (
+                f"Referenced in traceback at line {frame.line_number}"
+                if frame else "Not directly in traceback but in suspicious file"
+            )
+            results.append(SuspiciousFunction(
+                name=node.name,
+                file_path=file_path,
+                start_line=node.lineno,
+                end_line=node.end_lineno,
+                suspicion_score=suspicion,
+                source=func_src[:2000],
+                reason=reason,
+            ))
+        return results
+
+    @staticmethod
+    def _extract_generic_functions(
+        source,
+        file_path,
+        func_suspicion,
+        func_frame,
+        language,
+    ):
+        """Extract Java/C++ methods using regex-based approach."""
+        results = []
+        lines = source.splitlines()
+
+        if language == "java":
+            pattern = re.compile(
+                r'(?:public|private|protected|static|final|void|\s)+'
+                r'([\w<>\[\]]+)\s+(\w+)\s*\([^)]*\)\s*(?:throws\s+[\w,\s]+)?\s*\{',
+                re.MULTILINE,
+            )
+        else:  # cpp
+            pattern = re.compile(
+                r'(?:[\w:<>*&\s]+)\s+(\w+)\s*\([^)]*\)\s*(?:const|noexcept)?\s*\{',
+                re.MULTILINE,
+            )
+
+        for m in pattern.finditer(source):
+            func_name = m.group(2) if language == "java" else m.group(1)
+            start_line = source[:m.start()].count("\n") + 1
+            suspicion = func_suspicion.get(func_name, 0.0)
+            end_line = min(start_line + 30, len(lines))
+            func_src = "\n".join(lines[start_line - 1: end_line])
+            frame = func_frame.get(func_name)
+            reason = (
+                f"Referenced in traceback at line {frame.line_number}"
+                if frame else "Pattern matched in suspicious file"
+            )
+            results.append(SuspiciousFunction(
+                name=func_name,
+                file_path=file_path,
+                start_line=start_line,
+                end_line=end_line,
+                suspicion_score=suspicion,
+                source=func_src[:2000],
+                reason=reason,
+            ))
+        return results
+
+    @staticmethod
+    def _extract_cpp_functions_with_classes(
+        source,
+        file_path,
+        func_suspicion,
+        func_frame,
+    ):
+        """
+        Extract C++ functions AND class definitions when a class name is a suspect.
+
+        When the compiler error targets a specific class (e.g. 'class Student has
+        no member named getId'), we find the entire class body and return it as
+        the top SuspiciousFunction so the LLM gets the full class context.
+        """
+        results = []
+        lines = source.splitlines()
+
+        # First pass: are any suspects actually CLASS names in this file?
+        for suspect_name, score in func_suspicion.items():
+            class_pattern = re.compile(
+                r'\bclass\s+' + re.escape(suspect_name) + r'\b[^{;]*\{',
+                re.MULTILINE,
+            )
+            cm = class_pattern.search(source)
+            if cm:
+                start_line = source[:cm.start()].count('\n') + 1
+                try:
+                    brace_start = source.index('{', cm.start())
+                except ValueError:
+                    continue
+                depth = 0
+                end_pos = brace_start
+                for i, ch in enumerate(source[brace_start:], brace_start):
+                    if ch == '{':
+                        depth += 1
+                    elif ch == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end_pos = i + 1
+                            break
+                end_line = source[:end_pos].count('\n') + 1
+                class_src = '\n'.join(lines[start_line - 1: end_line])
+                frame = func_frame.get(suspect_name)
+                reason = (
+                    f"Class definition targeted: compiler reported missing member "
+                    f"(line {frame.line_number})" if frame
+                    else f"Class {suspect_name} identified as repair target by compiler error"
+                )
+                results.append(SuspiciousFunction(
+                    name=suspect_name,
+                    file_path=file_path,
+                    start_line=start_line,
+                    end_line=end_line,
+                    suspicion_score=score,
+                    source=class_src[:3000],
+                    reason=reason,
+                ))
+
+        # Second pass: regular function suspects not yet captured
+        func_pattern = re.compile(
+            r'(?:[\w:*&<>\s]+)\s+(\w+)\s*\([^)]*\)\s*(?:const|noexcept)?\s*\{',
+            re.MULTILINE,
+        )
+        captured_names = {r.name for r in results}
+        for m in func_pattern.finditer(source):
+            func_name = m.group(1)
+            if func_name in ('if', 'for', 'while', 'switch', 'catch', 'class'):
+                continue
+            if func_name in captured_names:
+                continue
+            start_line = source[:m.start()].count('\n') + 1
+            end_line = min(start_line + 30, len(lines))
+            func_src = '\n'.join(lines[start_line - 1: end_line])
+            suspicion = func_suspicion.get(func_name, 0.0)
+            frame = func_frame.get(func_name)
+            reason = (
+                f"Referenced in compiler error at line {frame.line_number}" if frame
+                else "Pattern matched in suspicious file"
+            )
+            results.append(SuspiciousFunction(
+                name=func_name,
+                file_path=file_path,
+                start_line=start_line,
+                end_line=end_line,
+                suspicion_score=suspicion,
+                source=func_src[:2000],
+                reason=reason,
+            ))
+
+        return results
+
+    # -----------------------------------------------------------------------
+    # Import dependency analysis
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_import_deps(
+        file_path,
+        function_name,
+        language,
+    ):
+        """
+        Extract the names of modules imported in the source file.
+        Used to provide context about what the buggy function depends on.
+        """
+        if not file_path or not os.path.exists(file_path):
+            return []
+
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                source = f.read()
+        except Exception:
+            return []
+
+        deps = []
+
+        if language == "python":
+            import ast
+            try:
+                tree = ast.parse(source)
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        for alias in node.names:
+                            deps.append(alias.name.split(".")[0])
+                    elif isinstance(node, ast.ImportFrom):
+                        if node.module:
+                            deps.append(node.module.split(".")[0])
+            except SyntaxError:
+                pass
+        elif language == "java":
+            for m in re.finditer(r'^import\s+([\w.]+)', source, re.MULTILINE):
+                deps.append(m.group(1).split(".")[-1])
+        elif language == "cpp":
+            for m in re.finditer(r'#include\s+[<"]([^>"]+)[>"]', source):
+                deps.append(m.group(1))
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_deps = []
+        for d in deps:
+            if d not in seen:
+                seen.add(d)
+                unique_deps.append(d)
+        return unique_deps
+
+    # -----------------------------------------------------------------------
+    # Helpers
+    # -----------------------------------------------------------------------
+
+    @classmethod
+    def _is_user_code(cls, file_path, project_root):
+        """Return True if the file path is user code (not stdlib/library)."""
+        if not file_path:
+            return False
+        normalized = file_path.replace("\\", "/")
+        for pattern in cls._STDLIB_PATTERNS:
+            if pattern in normalized:
+                return False
+        # Relative paths or paths within project_root are user code
+        try:
+            abs_path = os.path.abspath(file_path)
+            abs_root = os.path.abspath(project_root)
+            if os.path.commonpath([abs_path, abs_root]) == abs_root:
+                return True
+        except (ValueError, OSError):
+            pass
+        # Default: if it exists on disk, it's likely user code
+        return os.path.exists(file_path)
+
+    @staticmethod
+    def _build_summary(
+        primary_target,
+        primary_function,
+        crash_line,
+        suspicious_funcs,
+        is_multi_file,
+        frames,
+    ):
+        """Build a concise human-readable localization summary."""
+        target_name = os.path.basename(primary_target) if primary_target else "unknown"
+        lines = [
+            f"[BugLocalizer] Primary target: {target_name}",
+            f"  Crash function: {primary_function} (line {crash_line})",
+            f"  Stack depth: {len(frames)} frames",
+        ]
+        if is_multi_file:
+            lines.append("  [!] Multi-file bug detected")
+        if suspicious_funcs:
+            top = suspicious_funcs[0]
+            lines.append(
+                f"  Top suspect: {top.name} "
+                f"(lines {top.start_line}-{top.end_line}, "
+                f"score={top.suspicion_score:.1f})"
+            )
+        return "\n".join(lines)
+'''
+
+# Append only if the last expected anchor is missing
+if '_score_frames' not in src:
+    # File is truncated -- the anchor "# Frame scoring" exists but not the method
+    src = src.rstrip() + '\n' + missing_content
+    open(path, 'w', encoding='utf-8').write(src)
+    print('Restored missing content')
+else:
+    print('Content already present -- no restore needed')
+
+# Verify
+src2 = open(path, 'r', encoding='utf-8').read()
+checks = ['_score_frames', '_extract_suspicious_functions', '_extract_python_functions',
+          '_extract_generic_functions', '_extract_cpp_functions_with_classes',
+          '_extract_import_deps', '_is_user_code', '_build_summary',
+          '_CPP_MISSING_MEMBER_RE', '_CPP_NO_MEMBER_IN_RE', '_CPP_UNDECLARED_RE']
+for c in checks:
+    status = 'OK' if c in src2 else 'MISSING'
+    print(f'  {status}: {c}')
+print(f'Total lines: {len(src2.splitlines())}')

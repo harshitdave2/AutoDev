@@ -4,7 +4,7 @@ class BaseModel:
     Ensures a consistent interface whether using local LLMs or Cloud APIs.
     """
 
-    def generate_fix(self, prompt: str) -> str:
+    def generate_fix(self, prompt: str, language: str = "python") -> str:
         """
         Generates a code fix based on the provided prompt.
 

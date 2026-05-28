@@ -2,14 +2,18 @@ import re
 import ast
 import os
 from languages.cpp_lang.cpp_parser import parse_cpp_error
+from languages.java_lang.java_parser import parse_java_error
 
 
 def parse_traceback(stderr: str) -> dict:
 
     cpp_error = parse_cpp_error(stderr)
-
     if cpp_error:
         return cpp_error
+
+    java_error = parse_java_error(stderr)
+    if java_error:
+        return java_error
 
     result = {
         "file": "",
@@ -25,6 +29,8 @@ def parse_traceback(stderr: str) -> dict:
     file_matches = re.findall(file_pattern, stderr)
 
     if file_matches:
+        # User requested: select the *last* traceback file, not the first
+        # to correctly identify the deepest file where the bug occurred.
         last_match = file_matches[-1]
         result["file"] = last_match[0]
         result["line"] = int(last_match[1])
