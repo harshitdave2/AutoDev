@@ -475,7 +475,7 @@ class RetryManager:
             # regression tests; never claim an unverified logic bug.
             if validation["is_suspicious"]:
                 self.console.print(
-                    f"[bold yellow]! Advisory output signals: {validation['flags']}[/bold yellow]"
+                    f"[bold yellow]! Advisory output signals: {escape(str(validation['flags']))}[/bold yellow]"
                 )
                 self.console.print(
                     "[yellow]The program exited successfully. No repair will be "
@@ -963,7 +963,7 @@ class RetryManager:
                             else:
                                 self.console.print(
                                     f"[dim][FunctionPatchMerger] Merge failed: "
-                                    f"{_merge_result.reason} — validating as-is[/dim]"
+                                    f"{escape(str(_merge_result.reason))} — validating as-is[/dim]"
                                 )
                         except Exception as _fm_err:
                             self._log_exception("FunctionPatchMerger error", _fm_err, style="dim")
@@ -1126,7 +1126,7 @@ class RetryManager:
                             if original_stdout and not patched_stdout:
                                 raise ValueError("Patch removed program output")
                         except ValueError as e:
-                            self.console.print(f"[yellow]! {e}[/yellow]")
+                            self.console.print(f"[yellow]! {escape(str(e))}[/yellow]")
                             self._restore_backups(backup_paths)
                             continue
                         else:
@@ -1142,7 +1142,7 @@ class RetryManager:
                                 _reg_report = _regression_guard.check(_before_snapshot, _after_snapshot)
                                 if _reg_report.has_regression:
                                     self.console.print(
-                                        f"[yellow]! RegressionGuard: {_reg_report.severity} — "
+                                        f"[yellow]! RegressionGuard: {escape(str(_reg_report.severity))} — "
                                         f"{escape('; '.join(_reg_report.reasons[:2]))}[/yellow]"
                                     )
                                     # Don't hard-reject if it still ran — log and continue
@@ -1270,7 +1270,7 @@ class RetryManager:
                         cloud_models.append(GroqModel(groq_model_name, groq_key))
                         self.console.print(f"[dim]Groq ready: {escape(str(groq_model_name))}[/dim]")
                     except Exception as e:
-                        self.console.print(f"[yellow]Groq init failed: {e}[/yellow]")
+                        self._log_exception("Groq initialization failed", e)
                 else:
                     self.console.print("[dim]Groq: no API key found (set GROQ_API_KEY in .env)[/dim]")
 
@@ -1283,7 +1283,7 @@ class RetryManager:
                         cloud_models.append(GeminiModel(gemini_model_name, gemini_key))
                         self.console.print(f"[dim]Gemini ready: {escape(str(gemini_model_name))}[/dim]")
                     except Exception as e:
-                        self.console.print(f"[yellow]Gemini init failed: {e}[/yellow]")
+                        self._log_exception("Gemini initialization failed", e)
                 else:
                     self.console.print("[dim]Gemini: no API key found (set GEMINI_API_KEY in .env)[/dim]")
 
@@ -1418,7 +1418,7 @@ class RetryManager:
                                 )
                                 self.console.print(
                                     f"[yellow]Patch Accepted / Rejected Reason: Patch rejected: "
-                                    f"Suspicious output flags ({validation['flags']})[/yellow]"
+                                    f"Suspicious output flags ({escape(str(validation['flags']))})[/yellow]"
                                 )
                                 self._restore_backups(backup_paths)
                                 continue
@@ -1441,7 +1441,7 @@ class RetryManager:
                                 if original_stdout and not patched_stdout:
                                     raise ValueError("Cloud patch removed program output")
                             except ValueError as e:
-                                self.console.print(f"[yellow]! {e}[/yellow]")
+                                self.console.print(f"[yellow]! {escape(str(e))}[/yellow]")
                                 self._restore_backups(backup_paths)
                                 continue
                             else:
@@ -1464,7 +1464,7 @@ class RetryManager:
                         else:
                             self.console.print("[red]X Cloud crash persists[/red]")
                             preview = "\n".join(final_result["stderr"].strip().splitlines()[-3:])
-                            self.console.print(f"[red]{preview}[/red]")
+                            self._print_literal(preview, style="red")
                             self._restore_backups(backup_paths)
 
             except Exception as e:
