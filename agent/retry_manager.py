@@ -81,6 +81,7 @@ from agent.agent import AutoDevAgent
 from models.ollama_model import OllamaModel
 from core.output_validator import OutputValidator
 from languages.language_detector import LanguageDetector
+from core.expected_output import output_matches
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +252,19 @@ class RetryManager:
             "error_message": message,
         }
 
+    @staticmethod
+    def _expected_output_error(expected: str, actual: str) -> str:
+        """Create a compact, model-readable failure when stdout misses its oracle."""
+        limit = 1800
+        expected_preview = expected if len(expected) <= limit else expected[:limit] + "\n...[truncated]"
+        actual_preview = actual if len(actual) <= limit else actual[:limit] + "\n...[truncated]"
+        return (
+            "Explicit expected-output check failed. Repair the program so stdout matches "
+            "the expected output exactly (ignoring only line endings/final newlines).\n"
+            f"Expected stdout:\n{expected_preview}\n"
+            f"Actual stdout:\n{actual_preview}"
+        )
+
     # -----------------------------------------------------------------------
     # Static / deterministic helpers (unchanged from original)
     # -----------------------------------------------------------------------
@@ -416,6 +430,7 @@ class RetryManager:
         dry_run: bool = False,
         patch_mode: str = "full",
         fast_mode: bool = True,
+        expected_output: str | None = None,
     ):
         self._active_backup_paths = []
         try:
@@ -425,6 +440,7 @@ class RetryManager:
                 dry_run=dry_run,
                 patch_mode=patch_mode,
                 fast_mode=fast_mode,
+                expected_output=expected_output,
             )
         except BaseException:
             try:
@@ -445,6 +461,7 @@ class RetryManager:
         dry_run: bool = False,
         patch_mode: str = "full",   # "full" (default) or "function" (opt-in)
         fast_mode: bool = True,     # Speed-first mode (default: True)
+        expected_output: str | None = None,
     ):
         backup_path = None
         old_code = ""
@@ -466,14 +483,17 @@ class RetryManager:
 
         initial_result = run_script(script_path)
 
-        if initial_result["returncode"] == 0:
-            validation = OutputValidator.validate(initial_result["stdout"], language)
+        initial_stdout = initial_result.get("stdout", "") or ""
+        expected_output_matches = (
+            expected_output is None or output_matches(initial_stdout, expected_output)
+        )
 
-            # Output heuristics are advisory, not an oracle for program
-            # correctness. A clean exit is a successful execution check, but
-            # logical correctness requires caller-supplied expected outputs or
-            # regression tests; never claim an unverified logic bug.
-            if validation["is_suspicious"]:
+        if initial_result["returncode"] == 0 and expected_output_matches:
+            validation = OutputValidator.validate(initial_stdout, language)
+
+            # Heuristics remain advisory. An explicit stdout oracle, when supplied,
+            # is the stronger correctness check for this run.
+            if validation["is_suspicious"] and expected_output is None:
                 self.console.print(
                     f"[bold yellow]! Advisory output signals: {escape(str(validation['flags']))}[/bold yellow]"
                 )
@@ -483,18 +503,28 @@ class RetryManager:
                 )
 
             self.console.print("[bold green]OK Program exited successfully.[/bold green]")
-            if initial_result["stdout"]:
-                self._print_literal(initial_result.get("stdout", "").strip(), style="dim")
+            if initial_stdout:
+                self._print_literal(initial_stdout.strip(), style="dim")
 
             return self._build_result(
                 "SUCCESS", 0, 0, max_retries,
-                "None (No failing test supplied)", "", "", "UNVERIFIED"
+                "None (No failing test supplied)", "", "",
+                "VERIFIED" if expected_output is not None else "UNVERIFIED"
             )
         else:
-            self.console.print("[bold red]X Crash detected![/bold red]")
-            error_preview = "\n".join(initial_result["stderr"].strip().splitlines()[-3:])
-            self._print_literal(error_preview, style="red")
-            result = initial_result
+            result = dict(initial_result)
+            if initial_result["returncode"] == 0 and expected_output is not None:
+                mismatch = self._expected_output_error(expected_output, initial_stdout)
+                result["stderr"] = mismatch
+                self._print_literal(
+                    "Program exited successfully, but stdout did not match the supplied expected-output oracle.",
+                    style="yellow",
+                )
+                self._print_literal(mismatch, style="dim")
+            else:
+                self.console.print("[bold red]X Crash detected![/bold red]")
+                error_preview = "\n".join(initial_result.get("stderr", "").strip().splitlines()[-3:])
+                self._print_literal(error_preview, style="red")
 
         # Capture initial output fingerprint for behavioral comparison later
         initial_fingerprint = BehaviorFingerprint.capture(
@@ -580,16 +610,22 @@ class RetryManager:
                 h_result = run_script(script_path)
                 if h_result["returncode"] == 0:
                     h_val = OutputValidator.validate(h_result["stdout"], language)
-                    if not h_val["is_suspicious"]:
+                    if ((expected_output is not None and output_matches(
+                            h_result.get("stdout", "") or "", expected_output
+                    )) or (expected_output is None and not h_val["is_suspicious"])):
                         self.console.print("[bold green]OK Heuristic repair succeeded![/bold green]")
                         if h_result["stdout"]:
                             self._print_literal(h_result["stdout"].strip())
                         return self._build_result(
                             "SUCCESS", 0, 0, max_retries,
-                            "HeuristicRepair", heuristic_raw, h_repaired, "UNVERIFIED"
+                            "HeuristicRepair", heuristic_raw, h_repaired,
+                            "VERIFIED" if expected_output is not None else "UNVERIFIED"
                         )
                 # Restore backup if heuristic failed
-                if h_result["returncode"] != 0 or h_val.get("is_suspicious"):
+                if (h_result["returncode"] != 0 or h_val.get("is_suspicious")
+                        or (expected_output is not None and not output_matches(
+                            h_result.get("stdout", "") or "", expected_output
+                        ))):
                     self.console.print("[yellow]Heuristic repair failed. Proceeding to LLM.[/yellow]")
                     self._restore_backups(backup_paths)
         except Exception as e:
@@ -632,16 +668,27 @@ class RetryManager:
                 quick_result = run_script(script_path)
                 if quick_result["returncode"] == 0:
                     validation = OutputValidator.validate(quick_result["stdout"], language)
-                    if not validation["is_suspicious"]:
+                    if ((expected_output is not None and output_matches(
+                            quick_result.get("stdout", "") or "", expected_output
+                    )) or (expected_output is None and not validation["is_suspicious"])):
                         self.console.print("[bold green]OK Quick repair succeeded![/bold green]")
                         if quick_result["stdout"]:
                             self._print_literal(quick_result["stdout"].strip())
                         return self._build_result(
                             "SUCCESS", 0, 0, max_retries,
-                            "QuickRepair", raw, repaired, "UNVERIFIED"
+                            "QuickRepair", raw, repaired,
+                            "VERIFIED" if expected_output is not None else "UNVERIFIED"
                         )
                 else:
                     result = quick_result
+                if (expected_output is not None and quick_result["returncode"] == 0
+                        and not output_matches(quick_result.get("stdout", "") or "", expected_output)):
+                    self._print_literal("Quick C++ repair did not match expected stdout; restoring and continuing.", style="yellow")
+                    self._restore_backups(backup_paths)
+                    result = dict(quick_result)
+                    result["stderr"] = self._expected_output_error(
+                        expected_output, quick_result.get("stdout", "") or ""
+                    )
 
         # -----------------------------
         # 3.7  QUICK SYNTAX REPAIR — unbalanced parentheses
@@ -669,13 +716,16 @@ class RetryManager:
                         paren_result = run_script(script_path)
                         if paren_result["returncode"] == 0:
                             paren_val = OutputValidator.validate(paren_result["stdout"], language)
-                            if not paren_val["is_suspicious"]:
+                            if ((expected_output is not None and output_matches(
+                                    paren_result.get("stdout", "") or "", expected_output
+                            )) or (expected_output is None and not paren_val["is_suspicious"])):
                                 self.console.print("[bold green]OK Quick paren-balance repair succeeded![/bold green]")
                                 if paren_result["stdout"]:
                                     self._print_literal(paren_result["stdout"].strip())
                                 return self._build_result(
                                     "SUCCESS", 0, 0, max_retries,
-                                    "QuickParenRepair", original_code, fixed_code, "UNVERIFIED"
+                                    "QuickParenRepair", original_code, fixed_code,
+                                    "VERIFIED" if expected_output is not None else "UNVERIFIED"
                                 )
                         self.console.print("[yellow]Paren repair did not fully fix the script. Proceeding to LLM.[/yellow]")
                         self._restore_backups(backup_paths)
@@ -725,6 +775,8 @@ class RetryManager:
                     self.console.print("[yellow]No traceback found. Switching to logical bug repair mode.[/yellow]")
                     tb = self._synthetic_traceback(
                         script_path,
+                        self._expected_output_error(expected_output, result.get("stdout", "") or "")
+                        if expected_output is not None else
                         "Suspicious output or logical bug detected"
                     )
                     is_last = True
@@ -780,7 +832,9 @@ class RetryManager:
                                 _cache_result = run_script(script_path)
                                 if _cache_result["returncode"] == 0:
                                     _cache_val = OutputValidator.validate(_cache_result["stdout"], language)
-                                    if not _cache_val["is_suspicious"]:
+                                    if ((expected_output is not None and output_matches(
+                                            _cache_result.get("stdout", "") or "", expected_output
+                                    )) or (expected_output is None and not _cache_val["is_suspicious"])):
                                         self.console.print(
                                             "[bold green][RepairMemory] Cached fix succeeded! "
                                             "Skipped LLM entirely.[/bold green]"
@@ -790,7 +844,8 @@ class RetryManager:
                                         return self._build_result(
                                             "SUCCESS", 0, 0, max_retries,
                                             f"RepairMemory({_mem_record.model_name})",
-                                            full_code, _mem_record.fixed_code, "UNVERIFIED"
+                                            full_code, _mem_record.fixed_code,
+                                            "VERIFIED" if expected_output is not None else "UNVERIFIED"
                                         )
                                 # Cache miss: restore and fall through to LLM
                                 self._restore_backups(backup_paths)
@@ -1094,7 +1149,20 @@ class RetryManager:
                     if result["returncode"] == 0:
                         validation = OutputValidator.validate(result["stdout"], language)
 
-                        if validation["is_suspicious"]:
+                        oracle_matches = (
+                            expected_output is None
+                            or output_matches(result.get("stdout", "") or "", expected_output)
+                        )
+                        if not oracle_matches:
+                            mismatch = self._expected_output_error(
+                                expected_output, result.get("stdout", "") or ""
+                            )
+                            self._print_literal(mismatch, style="yellow")
+                            self._restore_backups(backup_paths)
+                            result = dict(result)
+                            result["stderr"] = mismatch
+                            continue
+                        if validation["is_suspicious"] and expected_output is None:
                             self.console.print(
                                 f"[yellow]! Suspicious output: {escape(str(validation['flags']))}[/yellow]"
                             )
@@ -1125,7 +1193,7 @@ class RetryManager:
                         patched_stdout = result.get("stdout", "").strip() if result else ""
 
                         try:
-                            if original_stdout and not patched_stdout:
+                            if expected_output is None and original_stdout and not patched_stdout:
                                 raise ValueError("Patch removed program output")
                         except ValueError as e:
                             self.console.print(f"[yellow]! {escape(str(e))}[/yellow]")
@@ -1185,7 +1253,10 @@ class RetryManager:
                                     f"[dim]Confidence: {_conf_result.score:.1f}% "
                                     f"({escape(str(_conf_result.grade))} — {escape(str(_conf_result.label))})[/dim]"
                                 )
-                                _conf_display = f"{_conf_result.score:.1f}%"
+                                _conf_display = (
+                                    "VERIFIED" if expected_output is not None
+                                    else f"{_conf_result.score:.1f}%"
+                                )
                             except Exception:
                                 _conf_display = "UNVERIFIED"
                                 _conf_result = None
@@ -1303,7 +1374,12 @@ class RetryManager:
                         tb = parse_traceback(result["stderr"]) if result and result.get("stderr") else {}
 
                     if not tb.get("file") or not tb.get("line"):
-                        tb = self._synthetic_traceback(script_path, "Suspicious output detected")
+                        tb = self._synthetic_traceback(
+                            script_path,
+                            self._expected_output_error(expected_output, result.get("stdout", "") or "")
+                            if expected_output is not None else
+                            "Suspicious output detected",
+                        )
 
                     with open(script_path, "r", encoding="utf-8") as f:
                         entry_code = f.read()
@@ -1414,7 +1490,18 @@ class RetryManager:
                         if final_result["returncode"] == 0:
                             validation = OutputValidator.validate(final_result["stdout"], language)
 
-                            if validation["is_suspicious"]:
+                            cloud_oracle_matches = (
+                                expected_output is None
+                                or output_matches(final_result.get("stdout", "") or "", expected_output)
+                            )
+                            if not cloud_oracle_matches:
+                                mismatch = self._expected_output_error(
+                                    expected_output, final_result.get("stdout", "") or ""
+                                )
+                                self._print_literal(mismatch, style="yellow")
+                                self._restore_backups(backup_paths)
+                                continue
+                            if validation["is_suspicious"] and expected_output is None:
                                 self.console.print(
                                     f"[yellow]! Suspicious cloud output: {escape(str(validation['flags']))}[/yellow]"
                                 )
@@ -1440,7 +1527,7 @@ class RetryManager:
                             patched_stdout = final_result.get("stdout", "").strip() if final_result else ""
 
                             try:
-                                if original_stdout and not patched_stdout:
+                                if expected_output is None and original_stdout and not patched_stdout:
                                     raise ValueError("Cloud patch removed program output")
                             except ValueError as e:
                                 self.console.print(f"[yellow]! {escape(str(e))}[/yellow]")
@@ -1462,6 +1549,7 @@ class RetryManager:
                                     "SUCCESS", local_attempts, 1, max_retries,
                                     cloud_orchestrator.last_successful_model,
                                     full_code, patch,
+                                    confidence="VERIFIED" if expected_output is not None else None,
                                 )
                         else:
                             self.console.print("[red]X Cloud crash persists[/red]")

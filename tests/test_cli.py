@@ -30,6 +30,10 @@ class ConfidenceLabelTests(unittest.TestCase):
         self.assertEqual(describe_confidence({"confidence": "nan%"}), "nan%")
         self.assertEqual(describe_confidence({"confidence": "abc%"}), "abc%")
 
+    def test_expected_output_confidence_is_verified(self):
+        label = describe_confidence({"status": "SUCCESS", "attempts_used": 0, "confidence": "VERIFIED"})
+        self.assertEqual(label, "VERIFIED (stdout matched explicit expected-output oracle)")
+
     def test_failed_run_has_no_confidence(self):
         self.assertEqual(describe_confidence({"status": "FAILED", "attempts_used": 3}), "Not established")
 
@@ -109,6 +113,46 @@ class MainTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             manager_class.assert_called_once_with(model, verbose=True)
+
+
+    def test_expected_output_file_is_forwarded_to_retry_manager(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "a.py")
+            expected_path = os.path.join(d, "expected.txt")
+            pathlib.Path(path).write_text("print('wrong')", encoding="utf-8")
+            pathlib.Path(expected_path).write_text("right\\n", encoding="utf-8")
+            model = object()
+            fake_result = {
+                "status": "SUCCESS",
+                "attempts_used": 0,
+                "max_retries": 3,
+                "confidence": "VERIFIED",
+                "model": "test",
+                "old_code": "",
+                "new_code": "",
+            }
+            with patch("models.model_loader.load_model", return_value=model), \\
+                 patch.object(autodev, "RetryManager") as manager_class:
+                manager_class.return_value.attempt_fix.return_value = fake_result
+                code, _ = self._run(["run", path, "--expected-output-file", expected_path])
+
+            self.assertEqual(code, 0)
+            manager_class.return_value.attempt_fix.assert_called_once_with(
+                path,
+                max_retries=3,
+                dry_run=False,
+                patch_mode="full",
+                fast_mode=True,
+                expected_output="right\\n",
+            )
+
+    def test_missing_expected_output_file_exits_2(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "a.py")
+            pathlib.Path(path).write_text("print(1)")
+            code, out = self._run(["run", path, "--expected-output-file", os.path.join(d, "missing.txt")])
+        self.assertEqual(code, 2)
+        self.assertIn("expected-output file not found", out.lower())
 
     def test_keyboard_interrupt_exits_130(self):
         with tempfile.TemporaryDirectory() as d:

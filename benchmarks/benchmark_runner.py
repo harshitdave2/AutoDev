@@ -31,6 +31,7 @@ PROJECT_ROOT = BENCHMARK_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.expected_output import output_matches
 from core.runner import run_script
 MANIFEST_PATH = BENCHMARK_DIR / "manifest.json"
 RESULTS_DIR = BENCHMARK_DIR / "results"
@@ -267,7 +268,7 @@ class BenchmarkRunner:
             result.reference_returncode = int(oracle.get("returncode", 1))
             result.reference_matches = (
                 result.reference_returncode == 0
-                and normalize_output(oracle.get("stdout", "")) == normalize_output(case.expected_stdout)
+                and output_matches(oracle.get("stdout", ""), case.expected_stdout)
             )
             if result.reference_returncode == 127:
                 result.status = "SKIPPED_TOOLCHAIN"
@@ -293,6 +294,8 @@ class BenchmarkRunner:
             shutil.copy2(case.source, repair_dir / case.source.name)
             repair_target = repair_dir / case.source.name
             before = repair_target.read_bytes()
+            expected_file = repair_dir / "expected_stdout.txt"
+            expected_file.write_text(case.expected_stdout, encoding="utf-8")
             command = [
                 sys.executable,
                 str(AUTODEV_SCRIPT),
@@ -300,6 +303,8 @@ class BenchmarkRunner:
                 str(repair_target),
                 "--max-retries",
                 str(max_retries),
+                "--expected-output-file",
+                str(expected_file),
             ]
             if thorough:
                 command.append("--no-fast")
@@ -340,7 +345,7 @@ class BenchmarkRunner:
             result.actual_stdout = final.get("stdout", "")
             result.output_matches = (
                 result.patched_returncode == 0
-                and normalize_output(result.actual_stdout) == normalize_output(case.expected_stdout)
+                and output_matches(result.actual_stdout, case.expected_stdout)
             )
 
             if result.output_matches and result.source_changed and result.autodev_returncode == 0:

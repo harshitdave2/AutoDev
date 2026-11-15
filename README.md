@@ -83,9 +83,12 @@ python autodev.py run examples/broken_python.py --mode function
 
 # Adjust the retry budget
 python autodev.py run examples/broken_python.py --max-retries 5
+
+# Repair a program that runs but has incorrect output using a test oracle
+python autodev.py run examples/average.py --expected-output-file tests/expected_average.txt
 ```
 
-Use `python autodev.py run --help` to see all options.
+Use `python autodev.py run --help` to see all options. The expected-output file is compared against captured stdout; only line endings and final newlines are normalized.
 
 ## Cross-language repair evaluation
 

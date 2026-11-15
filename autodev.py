@@ -42,6 +42,8 @@ def describe_confidence(result: dict) -> str:
             return f"{provided} ({grade})"
         except ValueError:
             return provided
+    if provided == "VERIFIED":
+        return "VERIFIED (stdout matched explicit expected-output oracle)"
     if provided == "UNVERIFIED":
         return "UNVERIFIED (execution passed; logic not oracle-checked)"
     if status == "SUCCESS" and attempts == 0 and patched:
@@ -63,6 +65,11 @@ def main():
     run_parser.add_argument("--max-retries", type=positive_int, default=3, help="Maximum AI fix attempts.")
     run_parser.add_argument("--dry-run", action="store_true", help="Generate a fix without modifying source files.")
     run_parser.add_argument("--verbose", action="store_true", help="Show full tracebacks for unexpected errors.")
+    run_parser.add_argument(
+        "--expected-output-file",
+        type=str,
+        help="Path to a UTF-8 text file containing the exact expected stdout for this program.",
+    )
     run_parser.add_argument(
         "--mode", type=str, default="full", choices=["full", "function"],
         help="Patching mode: full-file replacement or a surgical function-level patch.",
@@ -92,6 +99,19 @@ def main():
             )
             return 2
 
+        expected_output = None
+        if args.expected_output_file:
+            expected_path = os.path.abspath(os.path.expanduser(args.expected_output_file))
+            if not os.path.isfile(expected_path):
+                console.print(f"[bold red]Expected-output file not found: {escape(expected_path)}[/bold red]")
+                return 2
+            try:
+                with open(expected_path, "r", encoding="utf-8") as stream:
+                    expected_output = stream.read()
+            except (OSError, UnicodeError) as exc:
+                console.print(f"[bold red]Could not read expected-output file: {escape(str(exc))}[/bold red]")
+                return 2
+
         from models.model_loader import load_model
         try:
             model = load_model()
@@ -107,6 +127,7 @@ def main():
                 dry_run=args.dry_run,
                 patch_mode=args.mode,
                 fast_mode=args.fast,
+                expected_output=expected_output,
             )
         except KeyboardInterrupt:
             console.print("\n[bold yellow]Interrupted. If a repair was in progress, "
