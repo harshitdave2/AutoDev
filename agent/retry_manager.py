@@ -790,12 +790,14 @@ class RetryManager:
                                         return self._build_result(
                                             "SUCCESS", 0, 0, max_retries,
                                             f"RepairMemory({_mem_record.model_name})",
-                                            full_code, _mem_record.fixed_code, "HIGH"
+                                            full_code, _mem_record.fixed_code, "UNVERIFIED"
                                         )
                                 # Cache miss: restore and fall through to LLM
                                 self._restore_backups(backup_paths)
                                 self.console.print("[dim][RepairMemory] Cached fix failed; falling through to LLM.[/dim]")
                     except Exception as _mem_ex:
+                        # A cached patch may already have been written before execution failed.
+                        self._restore_backups(backup_paths)
                         self._log_exception("RepairMemory lookup error", _mem_ex, style="dim")
 
                 # ---- BUILD MEMORY HINT for prompt ----
@@ -1185,7 +1187,7 @@ class RetryManager:
                                 )
                                 _conf_display = f"{_conf_result.score:.1f}%"
                             except Exception:
-                                _conf_display = "HIGH"
+                                _conf_display = "UNVERIFIED"
                                 _conf_result = None
 
                             # ---- Phase 2: RepairMemory record success ----

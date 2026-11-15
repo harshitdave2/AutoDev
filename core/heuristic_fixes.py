@@ -5,17 +5,16 @@ Lightweight deterministic repair layer — runs BEFORE any LLM call.
 
 If a deterministic fix succeeds, the LLM is never invoked.
 
-Checks (in order):
+Checks (safe, narrow rewrites only):
   1. Dictionary mutation during iteration
-  2. Division by zero is intentionally left for test/model-guided repair.
-  3. Index out-of-bounds (bounds guard)
-  4. NoneType dereference (None guard)
-  5. Unbalanced braces / brackets (C++, Java)
-  6. Missing semicolons (C++, Java)
-  7. Off-by-one range(len(x)+1) → range(len(x))  (Python)
-  8. Simple divide-by-zero guard in C++ / Java (literal)
+  2. Index out-of-bounds (bounds guard)
+  3. NoneType dereference (None guard)
+  4. Unbalanced braces / brackets (C++, Java)
+  5. Missing semicolons (C++, Java)
+  6. Off-by-one range(len(x)+1) → range(len(x)) (Python)
 
-Logging: prints [HeuristicFix] applied / skipped for each check.
+Division-by-zero failures are intentionally not rewritten: choosing a fallback
+value changes program semantics and must be guided by tests or the model.
 """
 import re
 
