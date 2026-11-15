@@ -18,7 +18,8 @@ class OutputValidator:
         for match in re.finditer(r"\[[^\[\]\n]*\]", stdout):
             try:
                 value = ast.literal_eval(match.group(0))
-            except (ValueError, SyntaxError):
+            except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+                # e.g. TypeError for text like [{{}}] (unhashable set member)
                 continue
             if isinstance(value, list):
                 lists.append(value)
@@ -43,12 +44,14 @@ class OutputValidator:
 
     @staticmethod
     def detect_numeric_overflow(stdout: str) -> bool:
+        if not isinstance(stdout, str):
+            return False
         for number in re.findall(r"(?<![\w.])-?\d+(?![\w.])", stdout):
-            try:
-                if abs(int(number)) > 1_000_000:
-                    return True
-            except ValueError:
-                continue
+            # Compare as digit strings: int() refuses numbers over 4300 digits
+            # on modern Python, which hid the most extreme values.
+            digits = number.lstrip("-").lstrip("0")
+            if len(digits) > 7 or (len(digits) == 7 and digits > "1000000"):
+                return True
         return False
 
     @classmethod

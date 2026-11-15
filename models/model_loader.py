@@ -12,6 +12,22 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = PROJECT_ROOT / "autodev_config.json"
 
 
+def _int_setting(cfg: dict, key: str, default, minimum: int):
+    """Read an integer setting, rejecting bools, non-integral floats and junk."""
+    if key not in cfg or cfg[key] is None:
+        return default
+    value = cfg[key]
+    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+        raise ValueError(f"'{key}' must be an integer.")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"'{key}' must be an integer.") from exc
+    if parsed < minimum:
+        raise ValueError(f"'{key}' must be >= {minimum}.")
+    return parsed
+
+
 def load_model(config_path=None):
     config_file = Path(config_path).expanduser().resolve() if config_path else DEFAULT_CONFIG
     if not config_file.is_file():
@@ -29,18 +45,12 @@ def load_model(config_path=None):
     if not isinstance(cfg, dict):
         raise ValueError("AutoDev configuration must contain a JSON object.")
 
-    # Validate numeric controls before constructing providers. Bad timeout
-    # values otherwise fail later inside the orchestration layer.
-    for key in ("cloud_timeout", "model_retries"):
-        if key in cfg:
-            try:
-                value = int(cfg[key])
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"'{key}' must be an integer.") from exc
-            if value < (1 if key == "cloud_timeout" else 0):
-                raise ValueError(
-                    f"'{key}' must be >= {1 if key == 'cloud_timeout' else 0}."
-                )
+    # Validate numeric controls before constructing providers. Bad values
+    # otherwise fail later (or silently fall back to defaults) in the model layer.
+    cloud_timeout = _int_setting(cfg, "cloud_timeout", 60, minimum=1)
+    local_timeout = _int_setting(cfg, "local_timeout", 45, minimum=1)
+    model_retries = _int_setting(cfg, "model_retries", 1, minimum=0)
+    num_ctx = _int_setting(cfg, "ollama_num_ctx", None, minimum=256)
 
     models = []
     model_errors = []
@@ -48,7 +58,7 @@ def load_model(config_path=None):
     if cfg.get("ollama_model"):
         try:
             from models.ollama_model import OllamaModel
-            models.append(OllamaModel(cfg["ollama_model"]))
+            models.append(OllamaModel(cfg["ollama_model"], timeout=local_timeout, num_ctx=num_ctx))
         except Exception as exc:
             model_errors.append(f"Ollama: {exc}")
 
@@ -62,14 +72,14 @@ def load_model(config_path=None):
     if cfg.get("groq_model") and groq_key:
         try:
             from models.groq_model import GroqModel
-            models.append(GroqModel(cfg["groq_model"], groq_key))
+            models.append(GroqModel(cfg["groq_model"], groq_key, timeout=cloud_timeout))
         except Exception as exc:
             model_errors.append(f"Groq: {exc}")
 
     if cfg.get("gemini_model") and gemini_key:
         try:
             from models.gemini_model import GeminiModel
-            models.append(GeminiModel(cfg["gemini_model"], gemini_key))
+            models.append(GeminiModel(cfg["gemini_model"], gemini_key, timeout=cloud_timeout))
         except Exception as exc:
             model_errors.append(f"Gemini: {exc}")
 
@@ -82,6 +92,6 @@ def load_model(config_path=None):
 
     return ModelOrchestrator(
         models,
-        timeout=int(cfg.get("cloud_timeout", 60)),
-        per_model_retries=int(cfg.get("model_retries", 1)),
+        timeout=cloud_timeout,
+        per_model_retries=model_retries,
     )
