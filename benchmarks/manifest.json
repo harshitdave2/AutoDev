@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "description": "Reviewed bug fixtures and exact output oracles for AutoDev's cross-language evaluation.",
+  "cases": [
+    {
+      "name": "type_error",
+      "language": "python",
+      "source": "benchmarks/python/type_error.py",
+      "reference": "benchmarks/reference/python/type_error.py",
+      "failure_mode": "runtime_error",
+      "initial_error_contains": "TypeError",
+      "expected_stdout": "Student: Alice | Score: 92 | Grade: A\nStudent: Bob | Score: 74 | Grade: C\nStudent: Charlie | Score: 85 | Grade: B\n"
+    },
+    {
+      "name": "index_error",
+      "language": "python",
+      "source": "benchmarks/python/index_error.py",
+      "reference": "benchmarks/reference/python/index_error.py",
+      "failure_mode": "runtime_error",
+      "initial_error_contains": "IndexError",
+      "expected_stdout": "Summary: {'last_three': [60, 50, 40], 'total': 6}\n"
+    },
+    {
+      "name": "logic_bug",
+      "language": "python",
+      "source": "benchmarks/python/logic_bug.py",
+      "reference": "benchmarks/reference/python/logic_bug.py",
+      "failure_mode": "wrong_output",
+      "initial_error_contains": null,
+      "expected_stdout": "Scores: [85, 92, 78, 95, 88]\nAverage: 87.6\nGrade: B\n"
+    },
+    {
+      "name": "none_deref",
+      "language": "python",
+      "source": "benchmarks/python/none_deref.py",
+      "reference": "benchmarks/reference/python/none_deref.py",
+      "failure_mode": "runtime_error",
+      "initial_error_contains": "TypeError",
+      "expected_stdout": "ALICE (alice@example.com)\nCHARLIE (not found)\n"
+    },
+    {
+      "name": "segfault",
+      "language": "cpp",
+      "source": "benchmarks/cpp/segfault.cpp",
+      "reference": "benchmarks/reference/cpp/segfault.cpp",
+      "failure_mode": "runtime_error",
+      "initial_error_contains": "out_of_range",
+      "expected_stdout": "Array: 3 7 1 9 4 6 2 \nMax value: 9\n"
+    },
+    {
+      "name": "cpp_null_ptr",
+      "language": "cpp",
+      "source": "benchmarks/cpp/null_ptr.cpp",
+      "reference": "benchmarks/reference/cpp/null_ptr.cpp",
+      "failure_mode": "runtime_error",
+      "initial_error_contains": "NONZERO",
+      "expected_stdout": "Value not found: 99\n"
+    },
+    {
+      "name": "index_oob",
+      "language": "java",
+      "source": "benchmarks/java/index_oob.java",
+      "reference": "benchmarks/reference/java/index_oob.java",
+      "failure_mode": "runtime_error",
+      "initial_error_contains": "ArrayIndexOutOfBoundsException",
+      "expected_stdout": "Cumulative sum: 1 3 6 10 15 \n"
+    },
+    {
+      "name": "java_null_ptr",
+      "language": "java",
+      "source": "benchmarks/java/null_ptr.java",
+      "reference": "benchmarks/reference/java/null_ptr.java",
+      "failure_mode": "runtime_error",
+      "initial_error_contains": "NullPointerException",
+      "expected_stdout": "ALICE <ALICE@EXAMPLE.COM>\nCHARLIE <not found>\n"
+    },
+    {
+      "name": "type_cast",
+      "language": "java",
+      "source": "benchmarks/java/type_cast.java",
+      "reference": "benchmarks/reference/java/type_cast.java",
+      "failure_mode": "runtime_error",
+      "initial_error_contains": "ClassCastException",
+      "expected_stdout": "Doubled: [2, 4, 8]\n"
+    }
+  ]
+}

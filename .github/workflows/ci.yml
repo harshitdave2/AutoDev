@@ -25,13 +25,22 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Compile Python modules
-        run: python -m compileall -q agent cli core languages memory models tests autodev.py
+        run: python -m compileall -q agent cli core languages memory models tests benchmarks autodev.py
 
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
+
+      - name: Run cross-language fixture preflight
+        run: python benchmarks/benchmark_runner.py --require-all-tools
