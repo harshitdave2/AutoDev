@@ -1,6 +1,9 @@
 """Load configured repair models using paths relative to this module's project."""
 import json
+import os
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 from models.model_orchestrator import ModelOrchestrator
 
@@ -16,6 +19,7 @@ def load_model(config_path=None):
             f"AutoDev configuration not found: {config_file}. "
             "Create autodev_config.json from the provided example."
         )
+    load_dotenv(dotenv_path=PROJECT_ROOT / ".env", override=False)
     try:
         with config_file.open(encoding="utf-8") as stream:
             cfg = json.load(stream)
@@ -39,17 +43,20 @@ def load_model(config_path=None):
     if not isinstance(api_keys, dict):
         raise ValueError("The 'api_keys' configuration value must be an object.")
 
-    if cfg.get("groq_model") and api_keys.get("groq"):
+    groq_key = api_keys.get("groq") or os.getenv("GROQ_API_KEY")
+    gemini_key = api_keys.get("gemini") or os.getenv("GEMINI_API_KEY")
+
+    if cfg.get("groq_model") and groq_key:
         try:
             from models.groq_model import GroqModel
-            models.append(GroqModel(cfg["groq_model"], api_keys["groq"]))
+            models.append(GroqModel(cfg["groq_model"], groq_key))
         except Exception as exc:
             model_errors.append(f"Groq: {exc}")
 
-    if cfg.get("gemini_model") and api_keys.get("gemini"):
+    if cfg.get("gemini_model") and gemini_key:
         try:
             from models.gemini_model import GeminiModel
-            models.append(GeminiModel(cfg["gemini_model"], api_keys["gemini"]))
+            models.append(GeminiModel(cfg["gemini_model"], gemini_key))
         except Exception as exc:
             model_errors.append(f"Gemini: {exc}")
 
