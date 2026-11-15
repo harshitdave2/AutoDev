@@ -18,22 +18,20 @@ from models.base_model import BaseModel
 from core.sanitizer import _strip_bos_artifacts
 
 
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
 def _load_local_timeout() -> int:
-    """Read local_timeout from autodev_config.json if available."""
-    config_candidates = [
-        os.path.join(os.path.dirname(__file__), '..', 'autodev_config.json'),
-        'autodev_config.json',
-    ]
-    for path in config_candidates:
-        path = os.path.abspath(path)
-        if os.path.exists(path):
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    cfg = json.load(f)
-                return int(cfg.get('local_timeout', 45))
-            except Exception:
-                pass
-    return 45  # Safe default
+    """Fallback for direct OllamaModel() use: read local_timeout from the
+    project's config. Deliberately does NOT consult the current working
+    directory, so behaviour never depends on where the CLI was started."""
+    path = os.path.join(PROJECT_ROOT, "autodev_config.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            value = int(json.load(f).get("local_timeout", 45))
+        return value if value >= 1 else 45
+    except (OSError, ValueError, TypeError, AttributeError):
+        return 45  # Safe default
 
 
 class OllamaModel(BaseModel):
@@ -46,9 +44,11 @@ class OllamaModel(BaseModel):
         model_name: str = "qwen2.5-coder:7b-instruct-q4_K_M",
         url: str = "http://localhost:11434/api/generate",
         timeout: int = None,
+        num_ctx: int = None,
     ):
         self.model_name = model_name
         self.url = url
+        self.num_ctx = num_ctx
         # Use provided timeout, then config file value, then hard default
         self.timeout = timeout if timeout is not None else _load_local_timeout()
 
@@ -63,22 +63,41 @@ class OllamaModel(BaseModel):
             "format": "json",
             "stream": False
         }
+        if self.num_ctx:
+            # Ollama silently truncates prompts beyond its context window; let
+            # the config raise it to match the configured context budget.
+            payload["options"] = {"num_ctx": int(self.num_ctx)}
 
         try:
             response = requests.post(self.url, json=payload, timeout=self.timeout)
-            response.raise_for_status()
         except requests.exceptions.Timeout:
             print(
                 f"[ModelTimeout] Ollama timed out after {self.timeout}s "
                 f"(model={self.model_name}). Failing over."
             )
             raise Exception(
-                f"Ollama timeout after {self.timeout}s — model {self.model_name} too slow"
+                f"Ollama timeout after {self.timeout}s - model {self.model_name} too slow"
+            )
+        except requests.exceptions.ConnectionError as e:
+            raise Exception(
+                f"Cannot reach Ollama at {self.url}. Is it running (`ollama serve`)? ({e})"
             )
         except requests.exceptions.RequestException as e:
-            raise Exception(f"Failed to connect to Ollama: {e}")
+            raise Exception(f"Ollama request failed: {e}")
 
-        raw_response = response.json().get("response", "")
+        if response.status_code == 404:
+            raise Exception(
+                f"Ollama model '{self.model_name}' not found. "
+                f"Run `ollama pull {self.model_name}`."
+            )
+        if not response.ok:
+            body = (response.text or "").strip().replace("\n", " ")[:200]
+            raise Exception(f"Ollama returned HTTP {response.status_code}: {body}")
+
+        try:
+            raw_response = response.json().get("response", "")
+        except ValueError:
+            raise Exception("Ollama returned a non-JSON HTTP response.")
 
         # Strip BOS artifacts; agent.py handles further parsing
         return _strip_bos_artifacts(raw_response) if raw_response else raw_response

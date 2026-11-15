@@ -2,6 +2,8 @@
 import subprocess
 import sys
 
+from languages.process_utils import RUN_KWARGS, timeout_result
+
 
 class PythonExecutor:
     def __init__(self, timeout: float = 15.0):
@@ -11,10 +13,8 @@ class PythonExecutor:
         try:
             process = subprocess.run(
                 [sys.executable, file_path],
-                capture_output=True,
-                text=True,
                 timeout=self.timeout,
-                check=False,
+                **RUN_KWARGS,
             )
             return {
                 "stdout": process.stdout,
@@ -22,11 +22,6 @@ class PythonExecutor:
                 "returncode": process.returncode,
             }
         except subprocess.TimeoutExpired as exc:
-            return {
-                "stdout": exc.stdout or "",
-                "stderr": (exc.stderr or "") + f"\nExecution timed out after {self.timeout:g}s.",
-                "returncode": 124,
-                "timed_out": True,
-            }
+            return timeout_result(exc, f"Execution timed out after {self.timeout:g}s.")
         except OSError as exc:
             return {"stdout": "", "stderr": str(exc), "returncode": 127}

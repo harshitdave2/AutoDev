@@ -11,20 +11,61 @@ Changes over original version:
      Java  : must contain class/method structure or import/package.
   2. Per-model retry budget -- each model gets one automatic retry on a
      transient failure before failing over to the next model.
-  3. Request timeout -- each model call is capped at `timeout` seconds
-     (default 30s local / 60s cloud) via Future.result(timeout=...).
-  4. last_successful_model -- correctly records the model name from the
-     winning future even under concurrent execution.
+  3. Request timeout -- `timeout` is the per-attempt budget in seconds. The
+     orchestrator waits at most ``timeout * (per_model_retries + 1)`` for the
+     slowest model, then returns whatever finished. Model calls run in daemon
+     threads, so a hung provider can no longer block the CLI or its exit.
+  4. last_successful_model -- the highest-priority model that produced a valid
+     result. Results are returned in model-priority order (deterministic),
+     not completion order.
   5. Backward-compatible: generate_fix() still raises NotImplementedError
      so callers that check hasattr(model, "generate_parallel") still work.
 """
 
 import ast
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed, Future, TimeoutError as FuturesTimeoutError
+import threading
+import time
 from typing import List, Optional
 
+from rich.console import Console
+from rich.markup import escape
+
 from models.base_model import BaseModel
+
+_console = Console(highlight=False)
+
+
+def _log(message: str) -> None:
+    """Print Rich markup properly (plain print() leaked literal [dim] tags)."""
+    _console.print(message)
+
+
+_PERMANENT_PHRASES = (
+    "quota", "rate limit", "rate_limit", "too many requests", "resource_exhausted",
+    "invalid api key", "api key not valid", "unauthorized", "authentication",
+    "permission_denied", "forbidden",
+)
+_STATUS_IN_TEXT = re.compile(r"(?:http|status|code)\D{0,15}(?:401|403|429)(?!\d)")
+
+
+def _is_permanent_failure(exc: Exception) -> bool:
+    """True for quota/auth failures that retrying the same model cannot fix.
+
+    The old check did ``"429" in str(exc)``, which also matched port numbers,
+    token counts and line numbers, and so skipped retries for transient errors.
+    """
+    if exc.__class__.__name__ == "QuotaError":
+        return True
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(status, int):
+        return status in (401, 403, 429)
+    message = str(exc).lower()
+    return any(phrase in message for phrase in _PERMANENT_PHRASES) or bool(
+        _STATUS_IN_TEXT.search(message)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -207,144 +248,108 @@ class ModelOrchestrator(BaseModel):
             "Call generate_parallel() instead."
         )
 
+    def _run_model(self, model: BaseModel, prompt: str, language: str) -> Optional[str]:
+        """Run one model with its retry budget. Returns raw output or None."""
+        model_name = escape(str(getattr(model, "model_name", model.__class__.__name__)))
+        provider = escape(model.__class__.__name__.replace("Model", ""))
+        max_attempts = self.per_model_retries + 1
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                _log(f"    [dim]-> Routing to {model_name} (attempt {attempt})...[/dim]")
+                raw_result = model.generate_fix(prompt, language)
+
+                # Gate 1: non-empty output
+                if not isinstance(raw_result, str) or not raw_result.strip():
+                    raise ValueError(f"{provider} returned empty output")
+                stripped_result = raw_result.strip()
+
+                # Gate 2: language-aware structural validation
+                struct_ok, struct_reason = _StructuralValidator.validate(
+                    stripped_result, language, prompt
+                )
+                if not struct_ok:
+                    raise ValueError(f"{provider} structural validation failed: {struct_reason}")
+
+                # Gate 3: the agent expects a JSON block or a code fence
+                if "{" not in stripped_result and "```" not in stripped_result:
+                    raise ValueError(
+                        f"{provider} output has no JSON block or code fence - likely a prose response"
+                    )
+
+                _log(f"    [dim]OK {model_name} produced valid output.[/dim]")
+                return raw_result
+
+            except Exception as e:
+                detail = escape(str(e).split("\n")[0][:120])
+
+                if _is_permanent_failure(e):
+                    _log(f"    [bold yellow]! {provider} unavailable "
+                         f"(key invalid or quota exceeded). Skipping.[/bold yellow]")
+                    return None
+
+                if attempt >= max_attempts:
+                    _log(f"    [bold yellow]! {provider} failed after {attempt} "
+                         f"attempt(s): {detail}. Skipping.[/bold yellow]")
+                    return None
+
+                _log(f"    [yellow]! {provider} attempt {attempt} failed: {detail}. Retrying...[/yellow]")
+
+        return None
+
     def generate_parallel(self, prompt: str, language: str = "python") -> List[str]:
         """
-        Submit the prompt to all available models concurrently.
-        Applies the quality gate and collects valid results.
+        Submit the prompt to all configured models concurrently.
 
-        Args:
-            prompt   : The full repair prompt string.
-            language : Target language ("python", "java", "cpp").
-
-        Returns:
-            List of raw model output strings that passed quality validation.
-            Empty list if all models failed.
+        Returns the raw outputs that passed the quality gates, in model-priority
+        order. Models that have not finished within the deadline are skipped.
         """
         if not self.models:
             raise Exception("No cloud models available to orchestrate.")
 
+        outcomes: dict = {}
+        lock = threading.Lock()
+
+        def worker(index: int, model: BaseModel) -> None:
+            try:
+                result = self._run_model(model, prompt, language)
+            except BaseException:  # never let a worker die silently without an outcome
+                result = None
+            with lock:
+                outcomes[index] = result
+
+        threads = []
+        for index, model in enumerate(self.models):
+            thread = threading.Thread(
+                target=worker, args=(index, model), daemon=True, name=f"autodev-model-{index}"
+            )
+            thread.start()
+            threads.append(thread)
+
+        deadline = time.monotonic() + self.timeout * (self.per_model_retries + 1)
+        for thread in threads:
+            thread.join(max(0.0, deadline - time.monotonic()))
+
+        with lock:
+            finished = dict(outcomes)
+
         results: List[str] = []
+        winner = None
+        for index, model in enumerate(self.models):
+            name = str(getattr(model, "model_name", model.__class__.__name__))
+            if index not in finished:
+                provider = escape(model.__class__.__name__.replace("Model", ""))
+                _log(f"    [bold yellow]! {provider} timed out after "
+                     f"{self.timeout * (self.per_model_retries + 1):g}s. Skipping.[/bold yellow]")
+                continue
+            if finished[index] is not None:
+                results.append(finished[index])
+                if winner is None:
+                    winner = name
 
-        def run_model(model: BaseModel) -> Optional[str]:
-            """Run a single model with retry budget and timeout."""
-            model_name = getattr(model, "model_name", model.__class__.__name__)
-            provider = model.__class__.__name__.replace("Model", "")
-
-            for attempt in range(1, self.per_model_retries + 2):
-                # +2 so per_model_retries=1 means 2 total attempts
-                try:
-                    print(f"    [dim]-> Routing to {model_name} (attempt {attempt})...[/dim]")
-                    raw_result = model.generate_fix(prompt, language)
-
-                    # --- Quality Gate 1: Non-empty output ---
-                    if not raw_result or not raw_result.strip():
-                        raise ValueError(f"{provider} returned empty output")
-
-                    stripped_result = raw_result.strip()
-
-                    # --- Quality Gate 2: Language-aware structural validation ---
-                    # Replaces the old raw character-count gate.
-                    # Short but structurally valid patches are now accepted.
-                    struct_ok, struct_reason = _StructuralValidator.validate(
-                        stripped_result, language, prompt
-                    )
-                    if not struct_ok:
-                        raise ValueError(
-                            f"{provider} structural validation failed: {struct_reason}"
-                        )
-
-                    # --- Quality Gate 3: JSON structure presence ---
-                    # The agent expects a JSON block with candidate_1/2/3.
-                    # A response with no '{' at all is almost certainly wrong.
-                    if "{" not in stripped_result and "```" not in stripped_result:
-                        raise ValueError(
-                            f"{provider} output has no JSON block or code fence — "
-                            f"likely a prose response"
-                        )
-
-                    print(f"    [dim]OK {model_name} produced valid output.[/dim]")
-                    return raw_result
-
-                except FuturesTimeoutError:
-                    print(
-                        f"    [bold yellow]! {provider} timed out after {self.timeout}s. "
-                        f"Skipping.[/bold yellow]"
-                    )
-                    return None  # Timeout is unrecoverable — don't retry
-
-                except Exception as e:
-                    error_str = str(e).lower()
-                    error_class = e.__class__.__name__
-
-                    is_quota = (
-                        "429" in error_str
-                        or "quota" in error_str
-                        or "rate limit" in error_str
-                        or error_class == "QuotaError"
-                        or "invalid api key" in error_str
-                        or "authentication" in error_str
-                        or "unauthorized" in error_str
-                    )
-                    is_last_attempt = (attempt >= self.per_model_retries + 1)
-
-                    if is_quota:
-                        # Quota/auth errors are permanent — no retry
-                        print(
-                            f"    [bold yellow]! {provider} unavailable "
-                            f"(key invalid or quota exceeded). Skipping.[/bold yellow]"
-                        )
-                        return None
-
-                    if is_last_attempt:
-                        simplified_msg = str(e).split("\n")[0][:120]
-                        print(
-                            f"    [bold yellow]! {provider} failed after "
-                            f"{attempt} attempt(s): {simplified_msg}. Skipping.[/bold yellow]"
-                        )
-                        return None
-
-                    # Transient error — retry
-                    simplified_msg = str(e).split("\n")[0][:80]
-                    print(
-                        f"    [yellow]! {provider} attempt {attempt} failed: "
-                        f"{simplified_msg}. Retrying...[/yellow]"
-                    )
-
-            return None  # All retries exhausted
-
-        # -----------------------------------------------------------------------
-        # Concurrent execution with per-future timeout
-        # -----------------------------------------------------------------------
-        with ThreadPoolExecutor(max_workers=max(1, len(self.models))) as executor:
-            future_to_model: dict[Future, BaseModel] = {
-                executor.submit(run_model, m): m for m in self.models
-            }
-
-            for future in as_completed(future_to_model):
-                model = future_to_model[future]
-                model_name = getattr(model, "model_name", model.__class__.__name__)
-
-                try:
-                    res = future.result(timeout=self.timeout)
-                except FuturesTimeoutError:
-                    provider = model.__class__.__name__.replace("Model", "")
-                    print(
-                        f"    [bold yellow]! {provider} future timed out after "
-                        f"{self.timeout}s. Skipping.[/bold yellow]"
-                    )
-                    continue
-                except Exception as e:
-                    simplified = str(e).split("\n")[0][:120]
-                    print(f"    [yellow]! Future error for {model_name}: {simplified}[/yellow]")
-                    continue
-
-                if res is not None:
-                    results.append(res)
-                    # Record the winning model name under a lock-free pattern
-                    # (last write wins in CPython due to GIL, good enough here)
-                    self.last_successful_model = model_name
-
-        if not results:
-            print("    [bold red]! All orchestrated models failed to produce valid output.[/bold red]")
+        if winner is not None:
+            self.last_successful_model = winner
+        else:
+            _log("    [bold red]! All orchestrated models failed to produce valid output.[/bold red]")
 
         return results

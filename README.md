@@ -96,7 +96,7 @@ Edit `autodev_config.json` to select model names and tune context and timeout va
 Unit tests do not call external LLM providers:
 
 ```bash
-python -m compileall -q agent core languages memory models tests autodev.py
+python -m compileall -q agent cli core languages memory models tests autodev.py
 python -m unittest discover -s tests -v
 ```
 

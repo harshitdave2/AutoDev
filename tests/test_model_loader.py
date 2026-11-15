@@ -39,6 +39,34 @@ class ModelLoaderTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 load_model(config)
 
+    def _load(self, cfg):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = Path(temp_dir) / "c.json"
+            config.write_text(json.dumps(cfg), encoding="utf-8")
+            return load_model(config)
+
+    def test_explicit_config_local_timeout_is_honoured(self):
+        # OllamaModel used to re-read the default config and ignore this value.
+        orchestrator = self._load({"ollama_model": "m", "local_timeout": 7})
+        self.assertEqual(orchestrator.models[0].timeout, 7)
+
+    def test_invalid_numeric_settings_are_rejected(self):
+        for key, bad in [("local_timeout", "abc"), ("local_timeout", 0), ("local_timeout", -5),
+                         ("local_timeout", True), ("local_timeout", 7.5),
+                         ("cloud_timeout", 0), ("model_retries", -1), ("ollama_num_ctx", 10)]:
+            with self.subTest(key=key, value=bad):
+                with self.assertRaises(ValueError):
+                    self._load({"ollama_model": "m", key: bad})
+
+    def test_cloud_timeout_reaches_orchestrator(self):
+        orchestrator = self._load({"ollama_model": "m", "cloud_timeout": 9, "model_retries": 2})
+        self.assertEqual(orchestrator.timeout, 9)
+        self.assertEqual(orchestrator.per_model_retries, 2)
+
+    def test_num_ctx_is_forwarded_to_ollama(self):
+        orchestrator = self._load({"ollama_model": "m", "ollama_num_ctx": 8192})
+        self.assertEqual(orchestrator.models[0].num_ctx, 8192)
+
 
 if __name__ == "__main__":
     unittest.main()

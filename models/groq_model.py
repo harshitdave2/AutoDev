@@ -16,16 +16,23 @@ class GroqModel(BaseModel):
     """
     Concrete implementation of BaseModel for Groq's high-speed inference cloud.
     """
-    def __init__(self, model_name: str = "llama-3.3-70b-versatile", api_key: str = None):
+    FALLBACK_MODEL = "llama-3.3-70b-versatile"
+
+    def __init__(self, model_name: str = "llama-3.3-70b-versatile", api_key: str = None,
+                 timeout: float = 60.0):
         self.model_name = model_name
         self.api_key = api_key or os.environ.get("GROQ_API_KEY")
         
         if not self.api_key:
             raise ValueError("GROQ_API_KEY not found. Set it in .env or pass it directly.")
             
+        # max_retries=0: the orchestrator owns retry policy. The SDK default
+        # (2 hidden retries, 10 min timeout) multiplied waits and quota use.
         self.client = OpenAI(
             api_key=self.api_key,
-            base_url="https://api.groq.com/openai/v1"
+            base_url="https://api.groq.com/openai/v1",
+            timeout=timeout,
+            max_retries=0,
         )
 
     def generate_fix(self, prompt: str, language: str = "python") -> str:
@@ -38,10 +45,13 @@ class GroqModel(BaseModel):
             error_str = str(e).lower()
             
             # 1. Handle Decommissioned Models Seamlessly
-            if "model_decommissioned" in error_str or "not found" in error_str:
-                self.model_name = "llama-3.3-70b-versatile"
+            if (("model_decommissioned" in error_str or "model_not_found" in error_str
+                    or "model not found" in error_str)
+                    and self.model_name != self.FALLBACK_MODEL):
                 try:
-                    return self._call_api(self.model_name, prompt, language)
+                    result = self._call_api(self.FALLBACK_MODEL, prompt, language)
+                    self.model_name = self.FALLBACK_MODEL  # only after it works
+                    return result
                 except Exception as retry_e:
                     self._handle_error(retry_e)
             else:

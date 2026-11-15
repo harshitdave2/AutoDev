@@ -3,6 +3,7 @@ import os
 import subprocess
 import tempfile
 
+from languages.process_utils import RUN_KWARGS, timeout_result
 from .cpp_parser import parse_cpp_error
 
 
@@ -22,11 +23,13 @@ class CppExecutor:
             binary = os.path.join(temp_dir, "program.exe" if os.name == "nt" else "program")
             try:
                 compile_process = subprocess.run(
-                    ["g++", source, "-std=c++17", "-O2", "-o", binary],
-                    capture_output=True, text=True, timeout=self.compile_timeout, check=False,
+                    ["g++", source, "-std=c++17", "-O0", "-g", "-o", binary],
+                    timeout=self.compile_timeout, **RUN_KWARGS,
                 )
             except FileNotFoundError:
                 return {"returncode": 127, "stdout": "", "stderr": "g++ was not found. Install a C++ compiler and ensure it is on PATH."}
+            except OSError as exc:
+                return {"returncode": 127, "stdout": "", "stderr": f"Could not start g++: {exc}"}
             except subprocess.TimeoutExpired:
                 return {"returncode": 124, "stdout": "", "stderr": f"C++ compilation timed out after {self.compile_timeout:g}s.", "timed_out": True}
 
@@ -40,8 +43,7 @@ class CppExecutor:
 
             try:
                 run_process = subprocess.run(
-                    [binary], capture_output=True, text=True,
-                    timeout=self.run_timeout, check=False,
+                    [binary], timeout=self.run_timeout, **RUN_KWARGS,
                 )
                 return {
                     "returncode": run_process.returncode,
@@ -49,9 +51,6 @@ class CppExecutor:
                     "stderr": run_process.stderr,
                 }
             except subprocess.TimeoutExpired as exc:
-                return {
-                    "returncode": 124,
-                    "stdout": exc.stdout or "",
-                    "stderr": (exc.stderr or "") + f"\nC++ program timed out after {self.run_timeout:g}s.",
-                    "timed_out": True,
-                }
+                return timeout_result(exc, f"C++ program timed out after {self.run_timeout:g}s.")
+            except OSError as exc:
+                return {"returncode": 126, "stdout": "", "stderr": f"Could not run compiled program: {exc}"}

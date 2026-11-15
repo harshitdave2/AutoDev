@@ -89,5 +89,101 @@ class JavaExecutorTests(unittest.TestCase):
         self.assertIn("class declaration", result["stderr"])
 
 
+class ExecutorRobustnessTests(unittest.TestCase):
+    """Regressions for crashes found during the audit."""
+
+    def _write(self, directory, name, text):
+        path = os.path.join(directory, name)
+        with open(path, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        return path
+
+    def test_timeout_after_partial_output_does_not_crash(self):
+        # TimeoutExpired.stdout/stderr are bytes; this used to raise
+        # "TypeError: can't concat str to bytes".
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = self._write(temp_dir, "noisy.py",
+                "import sys, time\n"
+                "print('partial out', flush=True)\n"
+                "print('partial err', file=sys.stderr, flush=True)\n"
+                "time.sleep(30)\n")
+            result = PythonExecutor(timeout=1).execute(source)
+        self.assertTrue(result["timed_out"])
+        self.assertIsInstance(result["stdout"], str)
+        self.assertIsInstance(result["stderr"], str)
+        self.assertIn("partial out", result["stdout"])
+        self.assertIn("partial err", result["stderr"])
+        self.assertIn("timed out", result["stderr"])
+
+    def test_invalid_utf8_output_does_not_crash(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = self._write(temp_dir, "bad.py",
+                "import sys\nsys.stdout.buffer.write(b'ok \\xff done\\n')\n")
+            result = PythonExecutor().execute(source)
+        self.assertEqual(result["returncode"], 0)
+        self.assertIn("ok", result["stdout"])
+
+    def test_input_fails_fast_instead_of_blocking_on_terminal(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = self._write(temp_dir, "ask.py", "input('name? ')\n")
+            result = PythonExecutor(timeout=10).execute(source)
+        self.assertNotEqual(result["returncode"], 0)
+        self.assertIn("EOFError", result["stderr"])
+        self.assertFalse(result.get("timed_out"))
+
+
+class JavaClassSelectionTests(unittest.TestCase):
+    def test_prefers_class_with_main_over_earlier_helper(self):
+        from languages.java_lang.java_executor import _parse_class_name
+        src = "class Helper {}\npublic class Main { public static void main(String[] a) {} }"
+        self.assertEqual(_parse_class_name(src), "Main")
+
+    def test_ignores_comments_and_strings(self):
+        from languages.java_lang.java_executor import _parse_class_name
+        src = ('// public class Old {}\n/* class Older {} */\n'
+               'public class Real { public static void main(String[] a) { String s = "class Fake"; } }')
+        self.assertEqual(_parse_class_name(src), "Real")
+
+    def test_nested_class_is_not_selected(self):
+        from languages.java_lang.java_executor import _parse_class_name
+        src = "public class Outer { static class Inner {} public static void main(String[] a) {} }"
+        self.assertEqual(_parse_class_name(src), "Outer")
+
+    def test_non_public_main_class_after_helper(self):
+        from languages.java_lang.java_executor import _parse_class_name
+        src = "class A {}\nclass B { public static void main(String[] x) {} }"
+        self.assertEqual(_parse_class_name(src), "B")
+
+    def test_no_class_returns_empty(self):
+        from languages.java_lang.java_executor import _parse_class_name
+        self.assertEqual(_parse_class_name("int x = 1;"), "")
+
+
+class LanguageRoutingTests(unittest.TestCase):
+    def test_unsupported_language_is_a_value_error(self):
+        from languages.language_router import LanguageRouter, UnsupportedLanguageError
+        for name in ("script.js", "notes.txt", "noextension"):
+            with self.assertRaises(UnsupportedLanguageError) as ctx:
+                LanguageRouter.route(name)
+            self.assertIsInstance(ctx.exception, ValueError)
+
+    def test_extension_detection_is_case_insensitive_and_exact(self):
+        from languages.language_detector import LanguageDetector
+        self.assertEqual(LanguageDetector.detect("A.PY", quiet=True), "python")
+        self.assertEqual(LanguageDetector.detect("a.CPP", quiet=True), "cpp")
+        self.assertEqual(LanguageDetector.detect("a.py.backup", quiet=True), "unknown")
+        self.assertFalse(LanguageDetector.is_supported("a.js"))
+        self.assertTrue(LanguageDetector.is_supported("Main.java"))
+
+    def test_quiet_detection_prints_nothing(self):
+        import io
+        from contextlib import redirect_stdout
+        from languages.language_detector import LanguageDetector
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            LanguageDetector.detect("x.py", quiet=True)
+        self.assertEqual(buffer.getvalue(), "")
+
+
 if __name__ == "__main__":
     unittest.main()
