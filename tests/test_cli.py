@@ -131,7 +131,7 @@ class MainTests(unittest.TestCase):
                 "old_code": "",
                 "new_code": "",
             }
-            with patch("models.model_loader.load_model", return_value=model), \\
+            with patch("models.model_loader.load_model", return_value=model), \
                  patch.object(autodev, "RetryManager") as manager_class:
                 manager_class.return_value.attempt_fix.return_value = fake_result
                 code, _ = self._run(["run", path, "--expected-output-file", expected_path])

@@ -116,7 +116,7 @@ class BenchmarkPreflightTests(unittest.TestCase):
                     stderr="",
                 )
 
-            with patch("benchmarks.benchmark_runner.run_script", side_effect=calls), \\
+            with patch("benchmarks.benchmark_runner.run_script", side_effect=calls), \
                  patch("benchmarks.benchmark_runner.subprocess.run", side_effect=fake_autodev):
                 result = BenchmarkRunner()._run_case(
                     case, repair=True, max_retries=1, thorough=False
