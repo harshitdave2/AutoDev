@@ -1258,7 +1258,9 @@ class RetryManager:
                                     else f"{_conf_result.score:.1f}%"
                                 )
                             except Exception:
-                                _conf_display = "UNVERIFIED"
+                                _conf_display = (
+                                    "VERIFIED" if expected_output is not None else "UNVERIFIED"
+                                )
                                 _conf_result = None
 
                             # ---- Phase 2: RepairMemory record success ----

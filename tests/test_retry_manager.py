@@ -1,7 +1,9 @@
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from rich.console import Console
@@ -40,6 +42,43 @@ class RetryManagerSafetyTests(unittest.TestCase):
                     manager.attempt_fix(str(target))
 
             self.assertEqual(target.read_text(encoding="utf-8"), "print('original')\n")
+
+
+    def test_successful_exit_with_wrong_expected_output_enters_repair_path(self):
+        manager = self._manager()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "logic_bug.py"
+            original = "print('actual')\\n"
+            target.write_text(original, encoding="utf-8")
+
+            with patch("agent.retry_manager.run_script", return_value={
+                    "returncode": 0,
+                    "stdout": "actual\\n",
+                    "stderr": "",
+                }) as execute, \\
+                 patch("agent.retry_manager.BugLocalizer.localize", return_value=SimpleNamespace(
+                    primary_target=None,
+                    suspicious_funcs=[],
+                )), \\
+                 patch("agent.retry_manager.requests.get", return_value=SimpleNamespace(status_code=503)), \\
+                 patch("agent.retry_manager._repair_memory", None), \\
+                 patch.dict(os.environ, {"GROQ_API_KEY": "", "GEMINI_API_KEY": ""}):
+                result = manager.attempt_fix(
+                    str(target),
+                    max_retries=1,
+                    expected_output="expected\\n",
+                )
+
+            self.assertEqual(result["status"], "FAILED")
+            self.assertEqual(execute.call_count, 1)
+            self.assertEqual(target.read_text(encoding="utf-8"), original)
+
+    def test_expected_output_error_includes_expected_and_actual_values(self):
+        mismatch = RetryManager._expected_output_error("expected\\n", "actual\\n")
+        self.assertIn("Expected stdout:", mismatch)
+        self.assertIn("expected", mismatch)
+        self.assertIn("Actual stdout:", mismatch)
+        self.assertIn("actual", mismatch)
 
     def test_verbose_exception_logging_includes_traceback(self):
         manager = self._manager(verbose=True)
