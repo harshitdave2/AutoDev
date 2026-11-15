@@ -29,6 +29,19 @@ def load_model(config_path=None):
     if not isinstance(cfg, dict):
         raise ValueError("AutoDev configuration must contain a JSON object.")
 
+    # Validate numeric controls before constructing providers. Bad timeout
+    # values otherwise fail later inside the orchestration layer.
+    for key in ("cloud_timeout", "model_retries"):
+        if key in cfg:
+            try:
+                value = int(cfg[key])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"'{key}' must be an integer.") from exc
+            if value < (1 if key == "cloud_timeout" else 0):
+                raise ValueError(
+                    f"'{key}' must be >= {1 if key == 'cloud_timeout' else 0}."
+                )
+
     models = []
     model_errors = []
 
