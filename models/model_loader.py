@@ -1,34 +1,66 @@
+"""Load configured repair models using paths relative to this module's project."""
 import json
+from pathlib import Path
+
 from models.ollama_model import OllamaModel
 from models.groq_model import GroqModel
 from models.gemini_model import GeminiModel
-
 from models.model_orchestrator import ModelOrchestrator
 
-def load_model():
-    with open("autodev_config.json") as f:
-        cfg = json.load(f)
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG = PROJECT_ROOT / "autodev_config.json"
+
+
+def load_model(config_path=None):
+    config_file = Path(config_path).expanduser().resolve() if config_path else DEFAULT_CONFIG
+    if not config_file.is_file():
+        raise FileNotFoundError(
+            f"AutoDev configuration not found: {config_file}. "
+            "Create autodev_config.json from the provided example."
+        )
+    try:
+        with config_file.open(encoding="utf-8") as stream:
+            cfg = json.load(stream)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in {config_file}: {exc}") from exc
+
+    if not isinstance(cfg, dict):
+        raise ValueError("AutoDev configuration must contain a JSON object.")
 
     models = []
-    
+    model_errors = []
     if cfg.get("ollama_model"):
         try:
             models.append(OllamaModel(cfg["ollama_model"]))
-        except Exception:
-            pass
+        except Exception as exc:
+            model_errors.append(f"Ollama: {exc}")
 
-    api_keys = cfg.get("api_keys", {})
+    api_keys = cfg.get("api_keys") or {}
+    if not isinstance(api_keys, dict):
+        raise ValueError("The 'api_keys' configuration value must be an object.")
 
     if cfg.get("groq_model") and api_keys.get("groq"):
         try:
             models.append(GroqModel(cfg["groq_model"], api_keys["groq"]))
-        except Exception:
-            pass
+        except Exception as exc:
+            model_errors.append(f"Groq: {exc}")
 
     if cfg.get("gemini_model") and api_keys.get("gemini"):
         try:
             models.append(GeminiModel(cfg["gemini_model"], api_keys["gemini"]))
-        except Exception:
-            pass
+        except Exception as exc:
+            model_errors.append(f"Gemini: {exc}")
 
-    return ModelOrchestrator(models)
+    if not models:
+        detail = "; ".join(model_errors) if model_errors else "No model provider is configured."
+        raise RuntimeError(
+            f"AutoDev could not initialize any model. {detail} "
+            "Configure Ollama or provide a valid cloud API key."
+        )
+
+    return ModelOrchestrator(
+        models,
+        timeout=int(cfg.get("cloud_timeout", 60)),
+        per_model_retries=int(cfg.get("model_retries", 1)),
+    )
