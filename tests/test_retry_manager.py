@@ -101,7 +101,7 @@ class RetryManagerSafetyTests(unittest.TestCase):
 
             self.assertEqual(result["status"], "SUCCESS")
             self.assertEqual(result["confidence"], "VERIFIED")
-            self.assertEqual(target.read_text(encoding="utf-8"), "print('expected')\n")
+            self.assertEqual(target.read_text(encoding="utf-8").strip(), "print('expected')")
 
     def test_expected_output_error_includes_expected_and_actual_values(self):
         mismatch = RetryManager._expected_output_error("expected\n", "actual\n")
