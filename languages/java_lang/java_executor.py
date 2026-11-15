@@ -1,98 +1,74 @@
-import subprocess
+"""Java compile-and-run executor."""
 import os
 import re
+import subprocess
 import tempfile
 
 
 def _parse_package(source: str) -> str:
-    """Extract the package name from Java source, e.g. 'test_scripts'."""
     match = re.search(r'^\s*package\s+([\w.]+)\s*;', source, re.MULTILINE)
     return match.group(1) if match else ""
 
 
 def _parse_class_name(source: str) -> str:
-    """
-    Extract the public class name from Java source.
-    Falls back to the first class name found if no public class is declared.
-    """
-    # Try to find 'public class Foo'
-    match = re.search(r'\bpublic\s+class\s+(\w+)', source)
+    match = re.search(r'\bpublic\s+(?:final\s+|abstract\s+)?class\s+(\w+)', source)
     if match:
         return match.group(1)
-    # Fallback: any class declaration
     match = re.search(r'\bclass\s+(\w+)', source)
-    if match:
-        return match.group(1)
-    return ""
+    return match.group(1) if match else ""
 
 
 class JavaExecutor:
+    def __init__(self, compile_timeout: float = 30.0, run_timeout: float = 15.0):
+        self.compile_timeout = compile_timeout
+        self.run_timeout = run_timeout
 
     def execute(self, file_path: str) -> dict:
-        file_path = os.path.abspath(file_path)
-
-        # Read the source once to inspect package & class name
+        source_path = os.path.abspath(file_path)
+        if not os.path.isfile(source_path):
+            return {"returncode": 1, "stdout": "", "stderr": f"Source file not found: {source_path}"}
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                source = f.read()
-        except Exception as e:
-            return {"returncode": 1, "stdout": "", "stderr": str(e)}
+            with open(source_path, "r", encoding="utf-8") as stream:
+                source = stream.read()
+        except (OSError, UnicodeError) as exc:
+            return {"returncode": 1, "stdout": "", "stderr": str(exc)}
 
-        package_name = _parse_package(source)
         class_name = _parse_class_name(source)
-
         if not class_name:
-            # Last resort: use the file's base name (may be wrong case, but we try)
-            class_name = os.path.splitext(os.path.basename(file_path))[0]
+            return {"returncode": 1, "stdout": "", "stderr": "Could not identify a Java class declaration."}
+        package_name = _parse_package(source)
+        fq_class = f"{package_name}.{class_name}" if package_name else class_name
 
-        # Build fully-qualified class name for the `java` invocation
-        if package_name:
-            fq_class = f"{package_name}.{class_name}"
-        else:
-            fq_class = class_name
+        # Compile into an isolated temporary output directory. javac can infer
+        # the package directory from the source; no .class files pollute projects.
+        with tempfile.TemporaryDirectory(prefix="autodev-java-") as classpath_root:
+            try:
+                compile_result = subprocess.run(
+                    ["javac", "-d", classpath_root, source_path],
+                    capture_output=True, text=True, timeout=self.compile_timeout, check=False,
+                )
+            except FileNotFoundError:
+                return {"returncode": 127, "stdout": "", "stderr": "javac was not found. Install a JDK and ensure javac/java are on PATH."}
+            except subprocess.TimeoutExpired:
+                return {"returncode": 124, "stdout": "", "stderr": f"Java compilation timed out after {self.compile_timeout:g}s.", "timed_out": True}
 
-        # Determine the classpath root.
-        # If the file has a package (e.g. test_scripts.DataProcessor) the .class
-        # files must be placed at a root that is *above* the package directory so
-        # that `java test_scripts.DataProcessor` can find them.
-        if package_name:
-            # Walk up one directory per package component
-            depth = len(package_name.split("."))
-            classpath_root = file_path
-            for _ in range(depth + 1):          # +1 to get above the package dir
-                classpath_root = os.path.dirname(classpath_root)
-        else:
-            classpath_root = os.path.dirname(file_path)
+            if compile_result.returncode:
+                return {"returncode": compile_result.returncode, "stdout": "", "stderr": compile_result.stderr}
 
-        # Ensure the classpath root exists (edge-case: file is in root dir)
-        if not classpath_root:
-            classpath_root = "."
-
-        # ── Compile ──────────────────────────────────────────────────────────
-        compile_result = subprocess.run(
-            ["javac", "-d", classpath_root, file_path],
-            capture_output=True,
-            text=True,
-            cwd=classpath_root,
-        )
-
-        if compile_result.returncode != 0:
-            return {
-                "returncode": 1,
-                "stdout": "",
-                "stderr": compile_result.stderr,
-            }
-
-        # ── Run ──────────────────────────────────────────────────────────────
-        run_result = subprocess.run(
-            ["java", "-cp", classpath_root, fq_class],
-            capture_output=True,
-            text=True,
-            cwd=classpath_root,
-        )
-
-        return {
-            "returncode": run_result.returncode,
-            "stdout": run_result.stdout,
-            "stderr": run_result.stderr,
-        }
+            try:
+                run_result = subprocess.run(
+                    ["java", "-cp", classpath_root, fq_class],
+                    capture_output=True, text=True, timeout=self.run_timeout, check=False,
+                )
+                return {
+                    "returncode": run_result.returncode,
+                    "stdout": run_result.stdout,
+                    "stderr": run_result.stderr,
+                }
+            except subprocess.TimeoutExpired as exc:
+                return {
+                    "returncode": 124,
+                    "stdout": exc.stdout or "",
+                    "stderr": (exc.stderr or "") + f"\nJava program timed out after {self.run_timeout:g}s.",
+                    "timed_out": True,
+                }

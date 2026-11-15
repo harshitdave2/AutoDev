@@ -249,3 +249,21 @@ ollama_logs/
 
 # Benchmark outputs
 benchmarks/results/
+
+# AutoDev local credentials and generated artifacts
+.env
+.env.*
+!.env.example
+*.class
+*.exe
+*.out
+*.backup
+run_*.txt
+output.txt
+check_out.txt
+push_error.txt
+restore_body.txt
+sanitizer_out.txt
+
+# Test and benchmark artifacts
+.autodev/

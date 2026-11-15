@@ -1,108 +1,71 @@
+"""Heuristic output checks.
+
+These checks are advisory: without an expected-output oracle, unusual output
+must not be treated as proof of a logic bug.
+"""
 import ast
 import re
+from typing import Any
 
 
 class OutputValidator:
-
     @staticmethod
-    def extract_lists(stdout: str):
-        """
-        Extract all Python lists from stdout text.
-        Example:
-        'Normalized: [0,0,0]' → [0,0,0]
-        """
-
-        matches = re.findall(r"\[[^\]]+\]", stdout)
-
+    def extract_lists(stdout: str) -> list[list[Any]]:
+        """Extract Python list literals embedded in stdout."""
+        if not isinstance(stdout, str):
+            return []
         lists = []
-
-        for m in matches:
+        for match in re.finditer(r"\[[^\[\]\n]*\]", stdout):
             try:
-                parsed = ast.literal_eval(m)
-                if isinstance(parsed, list):
-                    lists.append(parsed)
-            except:
-                pass
-
+                value = ast.literal_eval(match.group(0))
+            except (ValueError, SyntaxError):
+                continue
+            if isinstance(value, list):
+                lists.append(value)
         return lists
 
+    @staticmethod
+    def detect_uniform_array(stdout: str) -> bool:
+        return any(len(values) > 1 and all(v == values[0] for v in values[1:])
+                   for values in OutputValidator.extract_lists(stdout))
 
     @staticmethod
-    def detect_uniform_array(stdout: str):
-
-        lists = OutputValidator.extract_lists(stdout)
-
-        for arr in lists:
-
-            if len(arr) > 1:
-
-                first = arr[0]
-
-                if all(v == first for v in arr):
-                    return True
-
-        return False
-
+    def detect_none_flood(stdout: str) -> bool:
+        lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+        return len(lines) >= 5 and all(line == "None" for line in lines)
 
     @staticmethod
-    def detect_none_flood(stdout: str):
-
-        lines = [l.strip() for l in stdout.splitlines() if l.strip()]
-
-        if not lines:
-            return False
-
-        return len(lines) >= 5 and all(l == "None" for l in lines)
+    def detect_short_output(stdout: str) -> bool:
+        """An empty output is detectable, but not inherently erroneous."""
+        return not stdout.strip()
 
     @staticmethod
-    def detect_short_output(stdout: str):
-
-        stripped = stdout.strip()
-
-        # only treat completely empty output as suspicious
-        if stripped == "":
-            return True
-
-        return False
-
-    @staticmethod
-    def detect_numeric_overflow(stdout: str):
-
-        import re
-
-        numbers = re.findall(r"-?\d+", stdout)
-
-        for n in numbers:
-
+    def detect_numeric_overflow(stdout: str) -> bool:
+        for number in re.findall(r"(?<![\w.])-?\d+(?![\w.])", stdout):
             try:
-                val = int(n)
-
-                # unrealistic large numbers
-                if abs(val) > 1000000:
+                if abs(int(number)) > 1_000_000:
                     return True
-
-            except:
-                pass
-
+            except ValueError:
+                continue
         return False
 
     @classmethod
-    def validate(cls, stdout: str, language: str = "python"):
+    def validate(cls, stdout: str, language: str = "python") -> dict:
+        if not isinstance(stdout, str):
+            raise TypeError("stdout must be a string")
 
-        report = {
-            "is_suspicious": False,
-            "flags": [],
-        }
-
+        flags = []
         if cls.detect_none_flood(stdout):
-            report["flags"].append("None Flood Detected")
-
+            flags.append("None Flood Detected")
         if cls.detect_uniform_array(stdout):
-            report["flags"].append("Suspicious Uniform Array")
-
+            flags.append("Suspicious Uniform Array")
         if cls.detect_numeric_overflow(stdout):
-            report["flags"].append("Unreasonable Numeric Output")
+            flags.append("Unreasonable Numeric Output")
 
-        report["is_suspicious"] = False
-
-        return report
+        # Short/empty output is not flagged by default: valid programs can be
+        # intentionally silent, and the validator has no expected-output oracle.
+        return {
+            "is_suspicious": bool(flags),
+            "flags": flags,
+            "language": language,
+        }
