@@ -33,6 +33,15 @@ class OutputValidatorTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             OutputValidator.validate(None)
 
+    def test_empty_output_is_not_a_logic_failure(self):
+        report = OutputValidator.validate("")
+        self.assertFalse(report["is_suspicious"])
+        self.assertEqual(report["flags"], [])
+
+    def test_advisory_helpers_handle_non_string_values(self):
+        self.assertFalse(OutputValidator.detect_none_flood(None))
+        self.assertTrue(OutputValidator.detect_short_output(None))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -101,6 +101,8 @@ def main():
             confidence = "N/A (No repair needed)"
         elif status == "SUCCESS" and provided_conf in {"HIGH", "MEDIUM", "LOW"}:
             confidence = provided_conf
+        elif provided_conf == "UNVERIFIED":
+            confidence = "UNVERIFIED (execution passed; logic not oracle-checked)"
         else:
             confidence = "Not established"
 

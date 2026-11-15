@@ -402,22 +402,27 @@ class RetryManager:
         if initial_result["returncode"] == 0:
             validation = OutputValidator.validate(initial_result["stdout"], language)
 
+            # Output heuristics are advisory, not an oracle for program
+            # correctness. A clean exit is a successful execution check, but
+            # logical correctness requires caller-supplied expected outputs or
+            # regression tests; never claim an unverified logic bug.
             if validation["is_suspicious"]:
                 self.console.print(
-                    f"[bold yellow]! Suspicious output detected: {validation['flags']}[/bold yellow]"
+                    f"[bold yellow]! Advisory output signals: {validation['flags']}[/bold yellow]"
                 )
-                self.console.print("[yellow]Proceeding with repair attempts...[/yellow]")
-                result = initial_result
-            else:
-                self.console.print("[bold green]OK Success! The script executed flawlessly.[/bold green]")
-
-                if initial_result["stdout"]:
-                    self.console.print(f"[dim]Output:\n{initial_result['stdout'].strip()}[/dim]")
-
-                return self._build_result(
-                    "SUCCESS", 0, 0, max_retries,
-                    "None (Already Working)", "", "", "HIGH"
+                self.console.print(
+                    "[yellow]The program exited successfully. No repair will be "
+                    "attempted without a failing test or reproducible error.[/yellow]"
                 )
+
+            self.console.print("[bold green]OK Program exited successfully.[/bold green]")
+            if initial_result["stdout"]:
+                self.console.print(f"[dim]Output:\n{initial_result['stdout'].strip()}[/dim]")
+
+            return self._build_result(
+                "SUCCESS", 0, 0, max_retries,
+                "None (No failing test supplied)", "", "", "UNVERIFIED"
+            )
         else:
             self.console.print("[bold red]X Crash detected![/bold red]")
             error_preview = "\n".join(initial_result["stderr"].strip().splitlines()[-3:])

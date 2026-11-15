@@ -31,13 +31,15 @@ class OutputValidator:
 
     @staticmethod
     def detect_none_flood(stdout: str) -> bool:
+        if not isinstance(stdout, str):
+            return False
         lines = [line.strip() for line in stdout.splitlines() if line.strip()]
         return len(lines) >= 5 and all(line == "None" for line in lines)
 
     @staticmethod
     def detect_short_output(stdout: str) -> bool:
         """An empty output is detectable, but not inherently erroneous."""
-        return not stdout.strip()
+        return not isinstance(stdout, str) or not stdout.strip()
 
     @staticmethod
     def detect_numeric_overflow(stdout: str) -> bool:
