@@ -87,8 +87,8 @@ class BenchmarkPreflightTests(unittest.TestCase):
             root = Path(directory)
             broken = root / "broken.py"
             reference = root / "reference.py"
-            broken.write_text("raise TypeError('bad')\\n", encoding="utf-8")
-            reference.write_text("print('expected')\\n", encoding="utf-8")
+            broken.write_text("raise TypeError('bad')\n", encoding="utf-8")
+            reference.write_text("print('expected')\n", encoding="utf-8")
             case = BenchmarkCase(
                 name="sample",
                 language="python",
@@ -96,20 +96,20 @@ class BenchmarkPreflightTests(unittest.TestCase):
                 reference=reference,
                 failure_mode="runtime_error",
                 initial_error_contains="TypeError",
-                expected_stdout="expected\\n",
+                expected_stdout="expected\n",
             )
             calls = [
                 {"returncode": 1, "stdout": "", "stderr": "TypeError: bad"},
-                {"returncode": 0, "stdout": "expected\\n", "stderr": ""},
-                {"returncode": 0, "stdout": "expected\\n", "stderr": ""},
+                {"returncode": 0, "stdout": "expected\n", "stderr": ""},
+                {"returncode": 0, "stdout": "expected\n", "stderr": ""},
             ]
 
             def fake_autodev(command, **kwargs):
                 self.assertIn("--expected-output-file", command)
                 oracle_path = Path(command[command.index("--expected-output-file") + 1])
-                self.assertEqual(oracle_path.read_text(encoding="utf-8"), "expected\\n")
+                self.assertEqual(oracle_path.read_text(encoding="utf-8"), "expected\n")
                 target = Path(command[3])
-                target.write_text("print('expected')\\n", encoding="utf-8")
+                target.write_text("print('expected')\n", encoding="utf-8")
                 return SimpleNamespace(
                     returncode=0,
                     stdout="Final Status: SUCCESS",

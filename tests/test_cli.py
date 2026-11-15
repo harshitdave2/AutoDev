@@ -120,7 +120,7 @@ class MainTests(unittest.TestCase):
             path = os.path.join(d, "a.py")
             expected_path = os.path.join(d, "expected.txt")
             pathlib.Path(path).write_text("print('wrong')", encoding="utf-8")
-            pathlib.Path(expected_path).write_text("right\\n", encoding="utf-8")
+            pathlib.Path(expected_path).write_text("right\n", encoding="utf-8")
             model = object()
             fake_result = {
                 "status": "SUCCESS",
@@ -143,7 +143,7 @@ class MainTests(unittest.TestCase):
                 dry_run=False,
                 patch_mode="full",
                 fast_mode=True,
-                expected_output="right\\n",
+                expected_output="right\n",
             )
 
     def test_missing_expected_output_file_exits_2(self):
