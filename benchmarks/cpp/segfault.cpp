@@ -1,6 +1,6 @@
 /*
  * benchmarks/cpp/segfault.cpp
- * Bug: Array out-of-bounds access causing segmentation fault
+ * Bug: Array/vector out-of-bounds access (made deterministic with vector::at).
  */
 #include <iostream>
 #include <vector>
@@ -9,8 +9,8 @@ int find_max(const std::vector<int>& arr) {
     int max_val = arr[0];
     // BUG: <= arr.size() should be < arr.size()
     for (int i = 1; i <= (int)arr.size(); i++) {
-        if (arr[i] > max_val) {  // arr[arr.size()] is out of bounds
-            max_val = arr[i];
+        if (arr.at(i) > max_val) {  // vector::at throws at arr.size()
+            max_val = arr.at(i);
         }
     }
     return max_val;

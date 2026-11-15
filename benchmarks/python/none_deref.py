@@ -1,6 +1,6 @@
 """
 benchmarks/python/none_deref.py
-Bug: AttributeError — find_user() can return None, .upper() crashes
+Bug: TypeError — find_user() can return None, then the caller subscripts it.
 """
 
 def find_user(users, username):
@@ -11,7 +11,7 @@ def find_user(users, username):
 
 def get_display_name(users, username):
     user = find_user(users, username)
-    # BUG: no None check before attribute access
+    # BUG: no None check before subscripting user
     return user["name"].upper() + " (" + user["email"] + ")"
 
 if __name__ == "__main__":

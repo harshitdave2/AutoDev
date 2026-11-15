@@ -12,7 +12,7 @@ AutoDev is a command-line debugging assistant for Python, C++, and Java. It exec
 - Full-file replacement and optional function-level patching.
 - Dry-run mode for reviewing a proposed patch without changing the target source.
 - Bounded execution time for Python, C++, and Java test runs.
-- Benchmark fixtures and offline unit tests.
+- Cross-language benchmark fixtures with exact output oracles.
 
 ## Architecture
 
@@ -87,6 +87,34 @@ python autodev.py run examples/broken_python.py --max-retries 5
 
 Use `python autodev.py run --help` to see all options.
 
+## Cross-language repair evaluation
+
+The benchmark runner has two deliberately separate modes:
+
+```bash
+# No model calls: confirm that every broken fixture reproduces its declared
+# failure/wrong output and every reviewed reference implementation matches
+# its exact expected output.
+python benchmarks/benchmark_runner.py
+
+# Live evaluation: run AutoDev on temporary copies and score the final program
+# against the same exact output oracle.
+python benchmarks/benchmark_runner.py --repair
+
+# Narrow the live run to one language or one benchmark.
+python benchmarks/benchmark_runner.py --repair --language python
+python benchmarks/benchmark_runner.py --repair --benchmark type_error
+
+# Use more retries, thorough candidate generation, and a larger per-case timeout.
+python benchmarks/benchmark_runner.py --repair --max-retries 5 --thorough --timeout 600
+```
+
+A repair only counts as successful when the copied source changes, AutoDev exits successfully, the final program exits successfully, and stdout matches the reference output (line endings/final newlines are normalized; other whitespace is preserved). The original benchmark fixtures are never modified. JSON reports are written under `benchmarks/results/`.
+
+The suite includes runtime failures and a logical-bug case. The logical-bug case is important because the current CLI does not yet accept an expected-output/test oracle; it may correctly remain unrepaired even when its program exits with code zero. Such a result is scored as a failure rather than being counted as an AI repair.
+
+The default preflight does not call an LLM and is suitable for CI. Live repair scores depend on model/provider availability, model version, prompts, and configured retry budgets; compare runs using the same benchmark manifest and settings.
+
 ## Configuration
 
 Edit `autodev_config.json` to select model names and tune context and timeout values. Keep provider secrets out of this file; use environment variables or a local `.env` file. The model loader resolves the configuration path relative to the project rather than depending on the current working directory.
@@ -96,11 +124,11 @@ Edit `autodev_config.json` to select model names and tune context and timeout va
 Unit tests do not call external LLM providers:
 
 ```bash
-python -m compileall -q agent cli core languages memory models tests autodev.py
+python -m compileall -q agent cli core languages memory models tests benchmarks autodev.py
 python -m unittest discover -s tests -v
 ```
 
-GitHub Actions runs the same compile and unit-test checks on pushes to the maintenance branch and on pull requests targeting `main`.
+The CI workflow also runs the no-model benchmark preflight with Python, g++, and Java installed. This confirms that the known-broken fixtures and their reference implementations still behave as declared.
 
 ## Safety and limitations
 
