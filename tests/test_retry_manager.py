@@ -73,6 +73,36 @@ class RetryManagerSafetyTests(unittest.TestCase):
             self.assertEqual(execute.call_count, 1)
             self.assertEqual(target.read_text(encoding="utf-8"), original)
 
+
+    def test_model_candidate_must_match_expected_output_to_be_accepted(self):
+        manager = self._manager()
+        fake_model = SimpleNamespace(last_successful_model="fake-model")
+        manager.agent = SimpleNamespace(
+            model=fake_model,
+            request_fix=lambda **kwargs: ["print('expected')\\n"],
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "logic_bug.py"
+            target.write_text("print('actual')\\n", encoding="utf-8")
+
+            with patch("agent.retry_manager.BugLocalizer.localize", return_value=SimpleNamespace(
+                    primary_target=None,
+                    suspicious_funcs=[],
+                )), \
+                 patch("agent.retry_manager.requests.get", return_value=SimpleNamespace(status_code=200)), \
+                 patch("agent.retry_manager._repair_memory", None), \
+                 patch.object(manager, "_build_pruned_context", return_value="print('actual')\\n"):
+                result = manager.attempt_fix(
+                    str(target),
+                    max_retries=1,
+                    expected_output="expected\\n",
+                )
+
+            self.assertEqual(result["status"], "SUCCESS")
+            self.assertEqual(result["confidence"], "VERIFIED")
+            self.assertEqual(target.read_text(encoding="utf-8"), "print('expected')\\n")
+
     def test_expected_output_error_includes_expected_and_actual_values(self):
         mismatch = RetryManager._expected_output_error("expected\\n", "actual\\n")
         self.assertIn("Expected stdout:", mismatch)
