@@ -36,6 +36,8 @@ import sys
 import shutil
 import ast
 import requests
+import subprocess
+import tempfile
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -217,7 +219,24 @@ class RetryManager:
 
     @staticmethod
     def validate_cpp_patch(code: str) -> bool:
-        return True
+        """Compile-check a complete C++ candidate without producing artifacts."""
+        if not isinstance(code, str) or not code.strip():
+            return False
+        try:
+            with tempfile.TemporaryDirectory(prefix="autodev-cpp-check-") as temp_dir:
+                source_path = os.path.join(temp_dir, "candidate.cpp")
+                with open(source_path, "w", encoding="utf-8") as source_file:
+                    source_file.write(code)
+                result = subprocess.run(
+                    ["g++", "-std=c++17", "-fsyntax-only", source_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                    check=False,
+                )
+                return result.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            return False
 
     @staticmethod
     def quick_cpp_repairs(code: str) -> str:
@@ -476,6 +495,12 @@ class RetryManager:
                 original_tb.get("error_message", "")
             )
             if h_repaired != heuristic_raw:
+                if dry_run:
+                    self.console.print("[yellow]DRY RUN -- heuristic patch generated; source left unchanged[/yellow]")
+                    return self._build_result(
+                        "DRY_RUN", 0, 0, max_retries,
+                        "HeuristicRepair", heuristic_raw, h_repaired,
+                    )
                 self.console.print("[cyan]^ Applying heuristic pre-fix...[/cyan]")
                 with open(patch_target, "w", encoding="utf-8") as f:
                     f.write(h_repaired)
@@ -526,6 +551,12 @@ class RetryManager:
                 raw = f.read()
             repaired = self.quick_cpp_repairs(raw)
             if repaired != raw:
+                if dry_run:
+                    self.console.print("[yellow]DRY RUN -- quick C++ patch generated; source left unchanged[/yellow]")
+                    return self._build_result(
+                        "DRY_RUN", 0, 0, max_retries,
+                        "QuickRepair", raw, repaired,
+                    )
                 self.console.print("[cyan]^ Applying quick heuristic repair...[/cyan]")
                 with open(script_path, "w", encoding="utf-8") as f:
                     f.write(repaired)
@@ -558,6 +589,12 @@ class RetryManager:
                     close_paren = original_code.count(")")
                     if open_paren > close_paren:
                         fixed_code = original_code + (")" * (open_paren - close_paren))
+                        if dry_run:
+                            self.console.print("[yellow]DRY RUN -- syntax patch generated; source left unchanged[/yellow]")
+                            return self._build_result(
+                                "DRY_RUN", 0, 0, max_retries,
+                                "QuickParenRepair", original_code, fixed_code,
+                            )
                         with open(patch_target, "w", encoding="utf-8") as f:
                             f.write(fixed_code)
                         paren_result = run_script(script_path)
