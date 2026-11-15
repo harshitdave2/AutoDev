@@ -55,13 +55,13 @@ class RetryManagerSafetyTests(unittest.TestCase):
                     "returncode": 0,
                     "stdout": "actual\\n",
                     "stderr": "",
-                }) as execute, \\
+                }) as execute, \
                  patch("agent.retry_manager.BugLocalizer.localize", return_value=SimpleNamespace(
                     primary_target=None,
                     suspicious_funcs=[],
-                )), \\
-                 patch("agent.retry_manager.requests.get", return_value=SimpleNamespace(status_code=503)), \\
-                 patch("agent.retry_manager._repair_memory", None), \\
+                )), \
+                 patch("agent.retry_manager.requests.get", return_value=SimpleNamespace(status_code=503)), \
+                 patch("agent.retry_manager._repair_memory", None), \
                  patch.dict(os.environ, {"GROQ_API_KEY": "", "GEMINI_API_KEY": ""}):
                 result = manager.attempt_fix(
                     str(target),
