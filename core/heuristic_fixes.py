@@ -5,17 +5,16 @@ Lightweight deterministic repair layer — runs BEFORE any LLM call.
 
 If a deterministic fix succeeds, the LLM is never invoked.
 
-Checks (in order):
+Checks (safe, narrow rewrites only):
   1. Dictionary mutation during iteration
-  2. Division by zero (literal zero guard)
-  3. Index out-of-bounds (bounds guard)
-  4. NoneType dereference (None guard)
-  5. Unbalanced braces / brackets (C++, Java)
-  6. Missing semicolons (C++, Java)
-  7. Off-by-one range(len(x)+1) → range(len(x))  (Python)
-  8. Simple divide-by-zero guard in C++ / Java (literal)
+  2. Index out-of-bounds (bounds guard)
+  3. NoneType dereference (None guard)
+  4. Unbalanced braces / brackets (C++, Java)
+  5. Missing semicolons (C++, Java)
+  6. Off-by-one range(len(x)+1) → range(len(x)) (Python)
 
-Logging: prints [HeuristicFix] applied / skipped for each check.
+Division-by-zero failures are intentionally not rewritten: choosing a fallback
+value changes program semantics and must be guided by tests or the model.
 """
 import re
 
@@ -46,18 +45,10 @@ def heuristic_repair(code: str, error_type: str, error_message: str) -> str:
             applied.append("dict-iteration-guard")
 
     # ------------------------------------------------------------------
-    # 2. Division by zero (Python)
+    # 2. Division by zero
     # ------------------------------------------------------------------
-    if "division by zero" in msg or "zerodivisionerror" in msg:
-        before = code
-        code = re.sub(
-            r'\b([a-zA-Z0-9_]+)\s*/\s*([a-zA-Z0-9_]+)\b',
-            r'(\1 / \2 if \2 != 0 else 0)',
-            code
-        )
-        if code != before:
-            applied.append("zerodiv-guard")
-
+    # No automatic fallback is safe here: choosing 0, None, or an exception
+    # changes program semantics and cannot be inferred from the traceback.
     # ------------------------------------------------------------------
     # 3. Index error → bounds check (Python)
     # ------------------------------------------------------------------

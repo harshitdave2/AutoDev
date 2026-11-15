@@ -87,6 +87,29 @@ class MainTests(unittest.TestCase):
         self.assertIn("unexpectedly", out)
         self.assertIn("--verbose", out)
 
+
+    def test_verbose_flag_is_forwarded_to_retry_manager(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "a.py")
+            pathlib.Path(path).write_text("print(1)")
+            model = object()
+            fake_result = {
+                "status": "SUCCESS",
+                "attempts_used": 0,
+                "max_retries": 3,
+                "confidence": "UNVERIFIED",
+                "model": "test",
+                "old_code": "",
+                "new_code": "",
+            }
+            with patch("models.model_loader.load_model", return_value=model), \
+                 patch.object(autodev, "RetryManager") as manager_class:
+                manager_class.return_value.attempt_fix.return_value = fake_result
+                code, _ = self._run(["run", path, "--verbose"])
+
+            self.assertEqual(code, 0)
+            manager_class.assert_called_once_with(model, verbose=True)
+
     def test_keyboard_interrupt_exits_130(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "a.py")
