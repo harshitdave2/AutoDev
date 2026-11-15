@@ -100,7 +100,7 @@ def main():
             return 2
 
         try:
-            manager = RetryManager(model)
+            manager = RetryManager(model, verbose=args.verbose)
             result = manager.attempt_fix(
                 script_path,
                 max_retries=args.max_retries,

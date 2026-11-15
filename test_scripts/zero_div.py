@@ -1,10 +1,7 @@
-def update_user_records(users):
-    # This function attempts to remove inactive users and archive old accounts.
-    for username, details in list(users.items()):
-        if details.get("status") == "inactive":
-            del users
-        else:
-            last_login = details.get("last_login")
-            if last_login < 2023:
-                details["status"] = "archived"
-    return users
+def calculate_ratio(total, count):
+    return total / count
+
+
+if __name__ == "__main__":
+    # Intentional failure fixture for AutoDev's ZeroDivisionError repair path.
+    print(calculate_ratio(10, 0))

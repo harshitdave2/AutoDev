@@ -7,7 +7,7 @@ If a deterministic fix succeeds, the LLM is never invoked.
 
 Checks (in order):
   1. Dictionary mutation during iteration
-  2. Division by zero (literal zero guard)
+  2. Division by zero is intentionally left for test/model-guided repair.
   3. Index out-of-bounds (bounds guard)
   4. NoneType dereference (None guard)
   5. Unbalanced braces / brackets (C++, Java)
@@ -46,18 +46,10 @@ def heuristic_repair(code: str, error_type: str, error_message: str) -> str:
             applied.append("dict-iteration-guard")
 
     # ------------------------------------------------------------------
-    # 2. Division by zero (Python)
+    # 2. Division by zero
     # ------------------------------------------------------------------
-    if "division by zero" in msg or "zerodivisionerror" in msg:
-        before = code
-        code = re.sub(
-            r'\b([a-zA-Z0-9_]+)\s*/\s*([a-zA-Z0-9_]+)\b',
-            r'(\1 / \2 if \2 != 0 else 0)',
-            code
-        )
-        if code != before:
-            applied.append("zerodiv-guard")
-
+    # No automatic fallback is safe here: choosing 0, None, or an exception
+    # changes program semantics and cannot be inferred from the traceback.
     # ------------------------------------------------------------------
     # 3. Index error → bounds check (Python)
     # ------------------------------------------------------------------

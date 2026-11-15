@@ -38,10 +38,13 @@ import ast
 import requests
 import subprocess
 import tempfile
+import traceback
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from rich.console import Console
+from rich.text import Text
+from rich.markup import escape
 from core.runner import run_script
 from core.analyzer import parse_traceback, extract_function_context, extract_additional_context
 from core.context_engine import ContextEngine
@@ -180,12 +183,47 @@ class _AdaptiveRetryState:
 
 class RetryManager:
 
-    def __init__(self, model=None):
+    def __init__(self, model=None, verbose: bool = False):
         self.console = Console()
+        self.verbose = bool(verbose)
+        self._active_backup_paths = []
         if model is None:
             from models.ollama_model import OllamaModel
             model = OllamaModel()
         self.agent = AutoDevAgent(model=model)
+
+    def _print_literal(self, value, style=None):
+        """Print program output or other untrusted text without parsing Rich markup."""
+        self.console.print(Text(str(value), style=style))
+
+    def _log_exception(self, label, exc, style="yellow"):
+        """Log a caught exception safely; include its traceback only in verbose mode."""
+        self._print_literal(f"{label}: {type(exc).__name__}: {exc}", style=style)
+        if self.verbose:
+            self._print_literal(traceback.format_exc(), style="dim")
+
+    @staticmethod
+    def _restore_backups(backup_paths):
+        """Restore every target from its original .backup snapshot.
+
+        All snapshots are attempted so one failed restore does not prevent the
+        remaining targets from being recovered. A failed rollback is surfaced.
+        """
+        errors = []
+        for backup_path in reversed(list(dict.fromkeys(backup_paths or []))):
+            if not isinstance(backup_path, str) or not backup_path.endswith(".backup"):
+                errors.append(f"Invalid backup path: {backup_path!r}")
+                continue
+            target_path = backup_path[:-len(".backup")]
+            if not os.path.isfile(backup_path):
+                errors.append(f"Backup is missing: {backup_path}")
+                continue
+            try:
+                shutil.copy2(backup_path, target_path)
+            except OSError as exc:
+                errors.append(f"{target_path}: {type(exc).__name__}: {exc}")
+        if errors:
+            raise RuntimeError("Rollback incomplete: " + "; ".join(errors))
 
     # -----------------------------------------------------------------------
     # Result builder
@@ -277,7 +315,7 @@ class RetryManager:
         """
         ok, reason = PatchValidator.validate(candidate, original_code, language, patch_mode=patch_mode)
         if not ok:
-            self.console.print(f"[yellow]! Patch validation failed: {reason}[/yellow]")
+            self.console.print(f"[yellow]! Patch validation failed: {escape(str(reason))}[/yellow]")
         return ok, reason
 
     def _detect_patch_mode(
@@ -376,6 +414,35 @@ class RetryManager:
         script_path: str,
         max_retries: int = 3,
         dry_run: bool = False,
+        patch_mode: str = "full",
+        fast_mode: bool = True,
+    ):
+        self._active_backup_paths = []
+        try:
+            return self._attempt_fix_impl(
+                script_path,
+                max_retries=max_retries,
+                dry_run=dry_run,
+                patch_mode=patch_mode,
+                fast_mode=fast_mode,
+            )
+        except BaseException:
+            try:
+                self._restore_backups(self._active_backup_paths)
+            except Exception as rollback_error:
+                self._print_literal(
+                    f"Rollback failed after an unexpected error: {rollback_error}",
+                    style="bold red",
+                )
+            raise
+        finally:
+            self._active_backup_paths = []
+
+    def _attempt_fix_impl(
+        self,
+        script_path: str,
+        max_retries: int = 3,
+        dry_run: bool = False,
         patch_mode: str = "full",   # "full" (default) or "function" (opt-in)
         fast_mode: bool = True,     # Speed-first mode (default: True)
     ):
@@ -417,7 +484,7 @@ class RetryManager:
 
             self.console.print("[bold green]OK Program exited successfully.[/bold green]")
             if initial_result["stdout"]:
-                self.console.print(f"[dim]Output:\n{initial_result['stdout'].strip()}[/dim]")
+                self._print_literal(initial_result.get("stdout", "").strip(), style="dim")
 
             return self._build_result(
                 "SUCCESS", 0, 0, max_retries,
@@ -426,7 +493,7 @@ class RetryManager:
         else:
             self.console.print("[bold red]X Crash detected![/bold red]")
             error_preview = "\n".join(initial_result["stderr"].strip().splitlines()[-3:])
-            self.console.print(f"[red]{error_preview}[/red]")
+            self._print_literal(error_preview, style="red")
             result = initial_result
 
         # Capture initial output fingerprint for behavioral comparison later
@@ -457,29 +524,30 @@ class RetryManager:
                     and os.path.exists(localization.primary_target)
                     and localization.primary_target != patch_target):
                 self.console.print(
-                    f"[cyan][BugLocalizer] Better target: {os.path.basename(localization.primary_target)}[/cyan]"
+                    f"[cyan][BugLocalizer] Better target: {escape(os.path.basename(localization.primary_target))}[/cyan]"
                 )
                 patch_target = localization.primary_target
             if localization.suspicious_funcs:
                 top = localization.suspicious_funcs[0]
                 self.console.print(
-                    f"[dim][BugLocalizer] Top suspect: {top.name}() "
+                    f"[dim][BugLocalizer] Top suspect: {escape(str(top.name))}() "
                     f"lines {top.start_line}-{top.end_line}[/dim]"
                 )
             # Store localization on self for access in success block
             self._last_localization = localization
         except Exception as _loc_err:
-            self.console.print(f"[dim]BugLocalizer: {_loc_err}[/dim]")
+            self._log_exception("BugLocalizer", _loc_err, style="dim")
             self._last_localization = None
 
         if patch_target != script_path:
-            self.console.print(f"[bold cyan][T] External file target found: {patch_target}[/bold cyan]")
+            self.console.print(f"[bold cyan][T] External file target found: {escape(str(patch_target))}[/bold cyan]")
 
         # -----------------------------
         # 2  BACKUP FILE
         # -----------------------------
 
         backup_paths = []
+        self._active_backup_paths = backup_paths
         if not dry_run:
             backup_paths.append(backup_file(script_path))
             if patch_target != script_path:
@@ -515,22 +583,18 @@ class RetryManager:
                     if not h_val["is_suspicious"]:
                         self.console.print("[bold green]OK Heuristic repair succeeded![/bold green]")
                         if h_result["stdout"]:
-                            self.console.print(h_result["stdout"].strip())
+                            self._print_literal(h_result["stdout"].strip())
                         return self._build_result(
                             "SUCCESS", 0, 0, max_retries,
-                            "HeuristicRepair", heuristic_raw, h_repaired, "HIGH"
+                            "HeuristicRepair", heuristic_raw, h_repaired, "UNVERIFIED"
                         )
                 # Restore backup if heuristic failed
                 if h_result["returncode"] != 0 or h_val.get("is_suspicious"):
                     self.console.print("[yellow]Heuristic repair failed. Proceeding to LLM.[/yellow]")
-                    for bp in backup_paths:
-                        if os.path.exists(bp):
-                            shutil.copy2(bp, bp[:-7])
+                    self._restore_backups(backup_paths)
         except Exception as e:
-            self.console.print(f"[yellow]Heuristic layer error: {e}[/yellow]")
-            for bp in backup_paths:
-                if os.path.exists(bp):
-                    shutil.copy2(bp, bp[:-7])
+            self._log_exception("Heuristic layer error", e)
+            self._restore_backups(backup_paths)
 
         # -----------------------------
         # 3.1  CHECK OLLAMA
@@ -571,10 +635,10 @@ class RetryManager:
                     if not validation["is_suspicious"]:
                         self.console.print("[bold green]OK Quick repair succeeded![/bold green]")
                         if quick_result["stdout"]:
-                            self.console.print(quick_result["stdout"].strip())
+                            self._print_literal(quick_result["stdout"].strip())
                         return self._build_result(
                             "SUCCESS", 0, 0, max_retries,
-                            "QuickRepair", raw, repaired, "HIGH"
+                            "QuickRepair", raw, repaired, "UNVERIFIED"
                         )
                 else:
                     result = quick_result
@@ -608,21 +672,17 @@ class RetryManager:
                             if not paren_val["is_suspicious"]:
                                 self.console.print("[bold green]OK Quick paren-balance repair succeeded![/bold green]")
                                 if paren_result["stdout"]:
-                                    self.console.print(paren_result["stdout"].strip())
+                                    self._print_literal(paren_result["stdout"].strip())
                                 return self._build_result(
                                     "SUCCESS", 0, 0, max_retries,
-                                    "QuickParenRepair", original_code, fixed_code, "HIGH"
+                                    "QuickParenRepair", original_code, fixed_code, "UNVERIFIED"
                                 )
                         self.console.print("[yellow]Paren repair did not fully fix the script. Proceeding to LLM.[/yellow]")
-                        for bp in backup_paths:
-                            if os.path.exists(bp):
-                                shutil.copy2(bp, bp[:-7])
+                        self._restore_backups(backup_paths)
                         result = paren_result
                 except Exception as e:
-                    self.console.print(f"[yellow]Quick paren repair error: {e}[/yellow]")
-                    for bp in backup_paths:
-                        if os.path.exists(bp):
-                            shutil.copy2(bp, bp[:-7])
+                    self._log_exception("Quick paren repair error", e)
+                    self._restore_backups(backup_paths)
 
         # -----------------------------
         # 4  LOCAL REPAIR LOOP
@@ -711,7 +771,7 @@ class RetryManager:
                         if _mem_record and _mem_record.confidence >= 80:
                             self.console.print(
                                 f"[bold cyan][RepairMemory] High-confidence cached fix found "
-                                f"({_mem_record.confidence:.0f}%, model={_mem_record.model_name}). "
+                                f"({_mem_record.confidence:.0f}%, model={escape(str(_mem_record.model_name))}). "
                                 f"Applying directly...[/bold cyan]"
                             )
                             if not dry_run:
@@ -726,19 +786,17 @@ class RetryManager:
                                             "Skipped LLM entirely.[/bold green]"
                                         )
                                         if _cache_result["stdout"]:
-                                            self.console.print(_cache_result["stdout"].strip())
+                                            self._print_literal(_cache_result["stdout"].strip())
                                         return self._build_result(
                                             "SUCCESS", 0, 0, max_retries,
                                             f"RepairMemory({_mem_record.model_name})",
                                             full_code, _mem_record.fixed_code, "HIGH"
                                         )
                                 # Cache miss: restore and fall through to LLM
-                                for bp in backup_paths:
-                                    if os.path.exists(bp):
-                                        shutil.copy2(bp, bp[:-7])
+                                self._restore_backups(backup_paths)
                                 self.console.print("[dim][RepairMemory] Cached fix failed; falling through to LLM.[/dim]")
                     except Exception as _mem_ex:
-                        self.console.print(f"[dim][RepairMemory] Lookup error: {_mem_ex}[/dim]")
+                        self._log_exception("RepairMemory lookup error", _mem_ex, style="dim")
 
                 # ---- BUILD MEMORY HINT for prompt ----
                 _mem_hint_str = ""
@@ -785,7 +843,7 @@ class RetryManager:
                                 generation_success = True
                                 break
                         except Exception as e:
-                            self.console.print(f"[red]AI generation failed: {e}[/red]")
+                            self._log_exception("AI generation failed", e, style="red")
 
                 if not generation_success:
                     self.console.print("[red]All models failed to generate valid code for this attempt.[/red]")
@@ -856,20 +914,20 @@ class RetryManager:
                     try:
                         candidate = auto_fix_syntax(candidate, language)
                     except Exception as e:
-                        self.console.print(f"[yellow]Syntax repair error on candidate {candidate_idx + 1}: {e}[/yellow]")
+                        self._log_exception(f"Syntax repair error on candidate {candidate_idx + 1}", e)
                         continue
 
                     # ---- Phase 3: PatchCompletion — repair truncated/incomplete patches ----
                     try:
                         candidate = PatchCompleter.complete(candidate, language=language)
                     except Exception as _pc_err:
-                        self.console.print(f"[dim]PatchCompletion error: {_pc_err}[/dim]")
+                        self._log_exception("PatchCompletion error", _pc_err, style="dim")
 
                     # Read current file state (restored from backup at loop start)
                     try:
                         original_code = open(patch_target, "r", encoding="utf-8").read()
                     except Exception as e:
-                        self.console.print(f"[red]Failed to read patch target: {e}[/red]")
+                        self._log_exception("Failed to read patch target", e, style="red")
                         break
 
                     # ─── STEP 1: Detect patch mode ────────────────────────────────────
@@ -908,7 +966,7 @@ class RetryManager:
                                     f"{_merge_result.reason} — validating as-is[/dim]"
                                 )
                         except Exception as _fm_err:
-                            self.console.print(f"[dim]FunctionPatchMerger error: {_fm_err}[/dim]")
+                            self._log_exception("FunctionPatchMerger error", _fm_err, style="dim")
                     else:
                         # Full-file patch: still attempt merge rescue for structural issues
                         try:
@@ -945,10 +1003,10 @@ class RetryManager:
                             continue
                         _seen_failure_sigs.add(_fail_sig)
                         self.console.print(
-                            f"[yellow]Candidate {candidate_idx + 1} rejected by validator: {val_reason}[/yellow]"
+                            f"[yellow]Candidate {candidate_idx + 1} rejected by validator: {escape(str(val_reason))}[/yellow]"
                         )
                         self.console.print(
-                            f"[dim][Validator] rejected: {val_reason}[/dim]"
+                            f"[dim][Validator] rejected: {escape(str(val_reason))}[/dim]"
                         )
                         _adaptive.record_failure("semantic", val_reason)
                         continue
@@ -991,7 +1049,7 @@ class RetryManager:
                                     raise ValueError("Patch removed program execution")
 
                     except ValueError as e:
-                        self.console.print(f"[yellow]Patch structural check failed: {e}[/yellow]")
+                        self.console.print(f"[yellow]Patch structural check failed: {escape(str(e))}[/yellow]")
                         continue
 
                     # ---- APPLY PATCH (full-file or function-level) ----
@@ -1005,18 +1063,18 @@ class RetryManager:
                             )
                             if not apply_result["applied"]:
                                 self.console.print(
-                                    f"[yellow]FunctionPatcher: {apply_result['reason']}[/yellow]"
+                                    f"[yellow]FunctionPatcher: {escape(str(apply_result['reason']))}[/yellow]"
                                 )
                                 continue
                             if apply_result["fallback"]:
                                 self.console.print(
                                     f"[dim]FunctionPatcher: fell back to full-file — "
-                                    f"{apply_result['reason']}[/dim]"
+                                    f"{escape(str(apply_result['reason']))}[/dim]"
                                 )
                             else:
                                 self.console.print(
                                     f"[dim]FunctionPatcher: patched function "
-                                    f"'{apply_result['function_name']}'[/dim]"
+                                    f"'{escape(str(apply_result['function_name']))}'[/dim]"
                                 )
                         else:
                             # Default: full-file replacement (original behavior)
@@ -1024,10 +1082,8 @@ class RetryManager:
                                 f.write(candidate)
 
                     except Exception as e:
-                        self.console.print(f"[yellow]Patch application failed: {e}[/yellow]")
-                        for bp in backup_paths:
-                            if os.path.exists(bp):
-                                shutil.copy2(bp, bp[:-7])
+                        self._log_exception("Patch application failed", e)
+                        self._restore_backups(backup_paths)
                         continue
 
                     # ---- VERIFY FIX ----
@@ -1038,15 +1094,13 @@ class RetryManager:
 
                         if validation["is_suspicious"]:
                             self.console.print(
-                                f"[yellow]! Suspicious output: {validation['flags']}[/yellow]"
+                                f"[yellow]! Suspicious output: {escape(str(validation['flags']))}[/yellow]"
                             )
                             self.console.print(
                                 f"[yellow]Patch Accepted / Rejected Reason: Patch rejected: "
-                                f"Suspicious output flags ({validation['flags']})[/yellow]"
+                                f"Suspicious output flags ({escape(str(validation['flags']))})[/yellow]"
                             )
-                            for bp in backup_paths:
-                                if os.path.exists(bp):
-                                    shutil.copy2(bp, bp[:-7])
+                            self._restore_backups(backup_paths)
                             continue
 
                         # ---- BEHAVIORAL FINGERPRINT CHECK (new) ----
@@ -1073,9 +1127,7 @@ class RetryManager:
                                 raise ValueError("Patch removed program output")
                         except ValueError as e:
                             self.console.print(f"[yellow]! {e}[/yellow]")
-                            for bp in backup_paths:
-                                if os.path.exists(bp):
-                                    shutil.copy2(bp, bp[:-7])
+                            self._restore_backups(backup_paths)
                             continue
                         else:
                             self.console.print(
@@ -1091,14 +1143,14 @@ class RetryManager:
                                 if _reg_report.has_regression:
                                     self.console.print(
                                         f"[yellow]! RegressionGuard: {_reg_report.severity} — "
-                                        f"{'; '.join(_reg_report.reasons[:2])}[/yellow]"
+                                        f"{escape('; '.join(_reg_report.reasons[:2]))}[/yellow]"
                                     )
                                     # Don't hard-reject if it still ran — log and continue
                                 else:
                                     self.console.print("[dim]RegressionGuard: OK[/dim]")
                             except Exception as _reg_err:
                                 _reg_report = None
-                                self.console.print(f"[dim]RegressionGuard error: {_reg_err}[/dim]")
+                                self._log_exception("RegressionGuard error", _reg_err, style="dim")
 
                             # ---- Phase 2: BehaviorEngine domain analysis ----
                             try:
@@ -1108,7 +1160,7 @@ class RetryManager:
                                 )
                                 if not _beh_report.is_logically_valid:
                                     self.console.print(
-                                        f"[yellow]! BehaviorEngine: {_beh_report.summary}[/yellow]"
+                                        f"[yellow]! BehaviorEngine: {escape(str(_beh_report.summary))}[/yellow]"
                                     )
                             except Exception:
                                 _beh_report = None
@@ -1129,7 +1181,7 @@ class RetryManager:
                                 )
                                 self.console.print(
                                     f"[dim]Confidence: {_conf_result.score:.1f}% "
-                                    f"({_conf_result.grade} — {_conf_result.label})[/dim]"
+                                    f"({escape(str(_conf_result.grade))} — {escape(str(_conf_result.label))})[/dim]"
                                 )
                                 _conf_display = f"{_conf_result.score:.1f}%"
                             except Exception:
@@ -1162,7 +1214,7 @@ class RetryManager:
                                 self.agent.store_successful_fix(tb, script_path, primary, candidate)
 
                             if result["stdout"]:
-                                self.console.print(result["stdout"].strip())
+                                self._print_literal(result["stdout"].strip())
 
                             return self._build_result(
                                 "SUCCESS",
@@ -1174,10 +1226,8 @@ class RetryManager:
                     else:
                         self.console.print("[red]X Crash persists[/red]")
                         preview = "\n".join(result["stderr"].strip().splitlines()[-3:])
-                        self.console.print(f"[red]{preview}[/red]")
-                        for bp in backup_paths:
-                            if os.path.exists(bp):
-                                shutil.copy2(bp, bp[:-7])
+                        self._print_literal(preview, style="red")
+                        self._restore_backups(backup_paths)
 
                 # All candidates exhausted for this attempt — loop continues
 
@@ -1189,9 +1239,7 @@ class RetryManager:
             self.console.print("\n[bold magenta][^] Escalating to Cloud Models[/bold magenta]")
 
             # Restore backups so cloud sees original code
-            for bp in backup_paths:
-                if os.path.exists(bp):
-                    shutil.copy2(bp, bp[:-7])
+            self._restore_backups(backup_paths)
 
             try:
                 from models.groq_model import GroqModel
@@ -1220,7 +1268,7 @@ class RetryManager:
                 if groq_key:
                     try:
                         cloud_models.append(GroqModel(groq_model_name, groq_key))
-                        self.console.print(f"[dim]Groq ready: {groq_model_name}[/dim]")
+                        self.console.print(f"[dim]Groq ready: {escape(str(groq_model_name))}[/dim]")
                     except Exception as e:
                         self.console.print(f"[yellow]Groq init failed: {e}[/yellow]")
                 else:
@@ -1233,7 +1281,7 @@ class RetryManager:
                 if gemini_key:
                     try:
                         cloud_models.append(GeminiModel(gemini_model_name, gemini_key))
-                        self.console.print(f"[dim]Gemini ready: {gemini_model_name}[/dim]")
+                        self.console.print(f"[dim]Gemini ready: {escape(str(gemini_model_name))}[/dim]")
                     except Exception as e:
                         self.console.print(f"[yellow]Gemini init failed: {e}[/yellow]")
                 else:
@@ -1321,7 +1369,7 @@ class RetryManager:
                                         f"added={_cloud_merge.functions_added})[/dim]"
                                     )
                             except Exception as _cfm_err:
-                                self.console.print(f"[dim]Cloud FunctionPatchMerger error: {_cfm_err}[/dim]")
+                                self._log_exception("Cloud FunctionPatchMerger error", _cfm_err, style="dim")
 
                         # ---- SEMANTIC VALIDATION on cloud candidate (mode-aware) ----
                         self.console.print(
@@ -1332,7 +1380,7 @@ class RetryManager:
                         )
                         if not val_ok:
                             self.console.print(
-                                f"[yellow]Cloud candidate {c_idx + 1} rejected: {val_reason}[/yellow]"
+                                f"[yellow]Cloud candidate {c_idx + 1} rejected: {escape(str(val_reason))}[/yellow]"
                             )
                             continue
 
@@ -1355,10 +1403,8 @@ class RetryManager:
                                     f.write(patch)
 
                         except Exception as e:
-                            self.console.print(f"[yellow]Cloud patch application failed: {e}[/yellow]")
-                            for bp in backup_paths:
-                                if os.path.exists(bp):
-                                    shutil.copy2(bp, bp[:-7])
+                            self._log_exception("Cloud patch application failed", e)
+                            self._restore_backups(backup_paths)
                             continue
 
                         final_result = run_script(script_path)
@@ -1368,15 +1414,13 @@ class RetryManager:
 
                             if validation["is_suspicious"]:
                                 self.console.print(
-                                    f"[yellow]! Suspicious cloud output: {validation['flags']}[/yellow]"
+                                    f"[yellow]! Suspicious cloud output: {escape(str(validation['flags']))}[/yellow]"
                                 )
                                 self.console.print(
                                     f"[yellow]Patch Accepted / Rejected Reason: Patch rejected: "
                                     f"Suspicious output flags ({validation['flags']})[/yellow]"
                                 )
-                                for bp in backup_paths:
-                                    if os.path.exists(bp):
-                                        shutil.copy2(bp, bp[:-7])
+                                self._restore_backups(backup_paths)
                                 continue
 
                             # Behavioral fingerprint for cloud patch
@@ -1398,9 +1442,7 @@ class RetryManager:
                                     raise ValueError("Cloud patch removed program output")
                             except ValueError as e:
                                 self.console.print(f"[yellow]! {e}[/yellow]")
-                                for bp in backup_paths:
-                                    if os.path.exists(bp):
-                                        shutil.copy2(bp, bp[:-7])
+                                self._restore_backups(backup_paths)
                                 continue
                             else:
                                 self.console.print(
@@ -1412,7 +1454,7 @@ class RetryManager:
                                 cloud_agent.store_successful_fix(tb, script_path, full_code, patch)
 
                                 if final_result["stdout"]:
-                                    self.console.print(final_result["stdout"].strip())
+                                    self._print_literal(final_result["stdout"].strip())
 
                                 return self._build_result(
                                     "SUCCESS", local_attempts, 1, max_retries,
@@ -1423,12 +1465,10 @@ class RetryManager:
                             self.console.print("[red]X Cloud crash persists[/red]")
                             preview = "\n".join(final_result["stderr"].strip().splitlines()[-3:])
                             self.console.print(f"[red]{preview}[/red]")
-                            for bp in backup_paths:
-                                if os.path.exists(bp):
-                                    shutil.copy2(bp, bp[:-7])
+                            self._restore_backups(backup_paths)
 
             except Exception as e:
-                self.console.print(f"[red]Cloud escalation failed: {e}[/red]")
+                self._log_exception("Cloud escalation failed", e, style="red")
 
         # -----------------------------
         # 6  FAILURE RESTORE
@@ -1436,9 +1476,7 @@ class RetryManager:
 
         self.console.print("[bold red]X All repair attempts failed[/bold red]")
 
-        for bp in backup_paths:
-            if os.path.exists(bp):
-                shutil.copy2(bp, bp[:-7])
+        self._restore_backups(backup_paths)
 
         return self._build_result(
             "FAILED",
