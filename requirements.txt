@@ -1,3 +1,8 @@
 requests>=2.31.0
 rich>=13.7.0
 colorama>=0.4.6
+
+# Optional cloud model providers (required only when their API keys are configured)
+openai>=1.30.0
+google-genai>=1.0.0
+python-dotenv>=1.0.0
