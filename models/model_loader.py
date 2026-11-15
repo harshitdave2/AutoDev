@@ -2,9 +2,6 @@
 import json
 from pathlib import Path
 
-from models.ollama_model import OllamaModel
-from models.groq_model import GroqModel
-from models.gemini_model import GeminiModel
 from models.model_orchestrator import ModelOrchestrator
 
 
@@ -30,8 +27,10 @@ def load_model(config_path=None):
 
     models = []
     model_errors = []
+
     if cfg.get("ollama_model"):
         try:
+            from models.ollama_model import OllamaModel
             models.append(OllamaModel(cfg["ollama_model"]))
         except Exception as exc:
             model_errors.append(f"Ollama: {exc}")
@@ -42,12 +41,14 @@ def load_model(config_path=None):
 
     if cfg.get("groq_model") and api_keys.get("groq"):
         try:
+            from models.groq_model import GroqModel
             models.append(GroqModel(cfg["groq_model"], api_keys["groq"]))
         except Exception as exc:
             model_errors.append(f"Groq: {exc}")
 
     if cfg.get("gemini_model") and api_keys.get("gemini"):
         try:
+            from models.gemini_model import GeminiModel
             models.append(GeminiModel(cfg["gemini_model"], api_keys["gemini"]))
         except Exception as exc:
             model_errors.append(f"Gemini: {exc}")
